@@ -18,7 +18,7 @@ pub trait ThreadPool {
     ///
     /// Returns an error if any thread fails to spawn. 
     /// All previously-spawned threads are terminated.
-    fn new(threads: u32) -> Result<Self>
+    fn new(threads: usize) -> Result<Self>
     where
         Self: Sized;
 

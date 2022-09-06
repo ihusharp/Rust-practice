@@ -1,3 +1,10 @@
+/*
+ * @Descripttion: 
+ * @Author: HuSharp
+ * @Date: 2022-09-06 08:56:27
+ * @LastEditTime: 2022-09-06 17:48:29
+ * @@Email: ihusharp@gmail.com
+ */
 use std::thread;
 
 use crate::Result;
@@ -9,7 +16,7 @@ use super::ThreadPool;
 pub struct RayonThreadPool;
 
 impl ThreadPool for RayonThreadPool {
-    fn new(_threads: u32) -> Result<Self> {
+    fn new(_threads: usize) -> Result<Self> {
         Ok(RayonThreadPool)
     }
 
