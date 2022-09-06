@@ -1,6 +1,6 @@
-/Users/husharp/CS/distributed/talent-plan-Rust/courses/rust/my-projects/practice-2/target/debug/deps/kvs-85959667862f810c.rmeta: src/bin/kvs.rs
+/Users/husharp/CS/Rust/Project/talent-plan-Rust/my-projects/practice-2/target/debug/deps/kvs-85959667862f810c.rmeta: src/bin/kvs.rs
 
-/Users/husharp/CS/distributed/talent-plan-Rust/courses/rust/my-projects/practice-2/target/debug/deps/kvs-85959667862f810c.d: src/bin/kvs.rs
+/Users/husharp/CS/Rust/Project/talent-plan-Rust/my-projects/practice-2/target/debug/deps/kvs-85959667862f810c.d: src/bin/kvs.rs
 
 src/bin/kvs.rs:
 
