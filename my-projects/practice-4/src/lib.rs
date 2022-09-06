@@ -1,10 +1,3 @@
-/*
- * @Descripttion:
- * @Author: HuSharp
- * @Date: 2022-08-15 20:39:25
- * @LastEditTime: 2022-09-06 15:37:16
- * @@Email: ihusharp@gmail.com
- */
 #![deny(missing_docs)]
 //! A simple key/value store.
 

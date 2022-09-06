@@ -1,12 +1,5 @@
-/*
- * @Descripttion: 
- * @Author: HuSharp
- * @Date: 2022-09-05 12:05:39
- * @LastEditTime: 2022-09-06 15:43:25
- * @@Email: ihusharp@gmail.com
- */
 use clap::arg_enum;
-use kvs::*;
+use kvs::{thread_pool::*, KvStore, KvsEngine, KvsServer, Result};
 use log::{info, LevelFilter, warn, error};
 use std::{net::SocketAddr, fs, env::current_dir, process::exit};
 use structopt::StructOpt;
@@ -53,14 +46,16 @@ fn run(opt: Opt) -> Result<()> {
     // write engine to engine dir
     fs::write(current_dir()?.join("engine"), format!("{:?}", engine))?;
 
+    let pool = NaiveThreadPool::new(4).unwrap();
+
     match engine {
-        Engine::kvs => run_with_engine(KvStore::open(current_dir()?)?, opt.addr),
+        Engine::kvs => run_with_engine(KvStore::open(current_dir()?)?, pool, opt.addr),
         Engine::sled => unimplemented!(),   // TODO
     }
 }
 
-fn run_with_engine<E: KvsEngine>(engine: E, addr: SocketAddr) -> Result<()> {
-    let mut server = KvsServer::new(engine);
+fn run_with_engine<E: KvsEngine, P: ThreadPool>(engine: E, pool: P,addr: SocketAddr) -> Result<()> {
+    let mut server = KvsServer::new(engine, pool);
     server.run(addr)
 }
 
