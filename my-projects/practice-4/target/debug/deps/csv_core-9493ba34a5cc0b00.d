@@ -1,7 +1,0 @@
-/Users/husharp/CS/Rust/Project/talent-plan-Rust/my-projects/practice-4/target/debug/deps/csv_core-9493ba34a5cc0b00.rmeta: /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/lib.rs /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/reader.rs /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/writer.rs
-
-/Users/husharp/CS/Rust/Project/talent-plan-Rust/my-projects/practice-4/target/debug/deps/csv_core-9493ba34a5cc0b00.d: /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/lib.rs /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/reader.rs /Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/writer.rs
-
-/Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/lib.rs:
-/Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/reader.rs:
-/Users/husharp/.cargo/registry/src/github.com-1ecc6299db9ec823/csv-core-0.1.10/src/writer.rs:
