@@ -1,7 +1,10 @@
 use std::sync::mpsc::{sync_channel, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use futures::channel::mpsc::UnboundedSender;
+use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::executor::ThreadPool;
+use futures::task::SpawnExt;
+use futures::{select, StreamExt};
 
 #[cfg(test)]
 pub mod config;
@@ -48,6 +51,19 @@ impl State {
     }
 }
 
+pub enum Event {
+    ResetTimeout,
+    Timeout,
+    HeartBeat,
+    RequestVoteReply(usize, RequestVoteReply),
+    AppendEntriesReply(usize, AppendEntriesReply),
+}
+
+pub enum RoleState {
+    Follower,
+    Candidate,
+    Leader,
+}
 // A single Raft peer.
 pub struct Raft {
     // RPC end points of all peers
@@ -60,6 +76,8 @@ pub struct Raft {
     // Your data here (2A, 2B, 2C).
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
+    role: RoleState,
+
 }
 
 impl Raft {
@@ -85,13 +103,79 @@ impl Raft {
             persister,
             me,
             state: Arc::default(),
+            role: RoleState::Follower,
         };
 
         // initialize from state persisted before a crash
         rf.restore(&raft_state);
 
-        crate::your_code_here((rf, apply_ch))
+        // crate::your_code_here((rf, apply_ch));
+        rf
     }
+
+    fn handle_event(&mut self, event: Event) {
+        match event {
+            Event::ResetTimeout => { unimplemented!(); },
+            Event::Timeout => {
+                self.handle_timeout();
+            },
+            Event::HeartBeat => {
+                self.handle_heartbeat();
+            }
+            Event::RequestVoteReply(from, reply) => {
+                self.handle_request_vote_reply(from, reply);
+            }
+            Event::AppendEntriesReply(from, reply) => {
+                self.handle_append_entries_reply(from, reply);
+            }
+        }
+    }
+
+    fn handle_timeout(&mut self) {
+        match self.role {
+            RoleState::Follower => {
+                self.role = RoleState::Candidate;
+            }
+            RoleState::Candidate => {
+            }
+            RoleState::Leader => {
+            }
+        }
+    }
+
+    fn handle_heartbeat(&mut self) {
+        match self.role {
+            RoleState::Follower => {
+            }
+            RoleState::Candidate => {
+            }
+            RoleState::Leader => {
+                // send heartbeat
+                for (i, peer) in self.peers.iter().enumerate() {
+                    if i == self.me {
+                        continue;
+                    }
+                    let mut args = AppendEntriesArgs::default();
+                    args.term = self.state.term;
+                    args.leader_id = self.me as u64;
+                    args.prev_log_index = 0;
+                    args.prev_log_term = 0;
+                    args.entries = vec![];
+                    args.leader_commit = 0;
+                    let peer = peer.clone();
+                    let me = self.me;
+                    let state = self.state.clone();
+                }
+            }
+        }
+    }
+    fn handle_request_vote_reply(&mut self, from: usize, reply: RequestVoteReply) {
+        
+    }
+    fn handle_append_entries_reply(&mut self, from: usize, reply: AppendEntriesReply) {
+        unimplemented!()
+    }
+    
 
     /// save Raft's persistent state to stable storage,
     /// where it can later be retrieved after a crash and restart.
@@ -192,6 +276,11 @@ impl Raft {
         // Your code here (2D).
         crate::your_code_here((index, snapshot));
     }
+
+    fn handle_request_vote_request() -> RequestVoteReply {
+        // Your code here (2A, 2B).
+        crate::your_code_here(())
+    }
 }
 
 impl Raft {
@@ -227,13 +316,48 @@ impl Raft {
 #[derive(Clone)]
 pub struct Node {
     // Your code here.
+    raft: Arc<Mutex<Raft>>,
+    event_loop_tx: UnboundedSender<Event>,
+    executer: ThreadPool,
 }
 
 impl Node {
     /// Create a new raft service.
     pub fn new(raft: Raft) -> Node {
         // Your code here.
-        crate::your_code_here(raft)
+        let (event_loop_tx, event_loop_rx) = mpsc::unbounded();
+
+        let node = Node {
+            raft: Arc::new(Mutex::new(raft)),
+            event_loop_tx: event_loop_tx,
+            executer: ThreadPool::new().unwrap(),
+        };
+        node.start_event_loop(event_loop_rx);
+        node
+    }
+
+    fn start_event_loop(&self, mut event_loop_rx: UnboundedReceiver<Event>) {
+        let raft = Arc::clone(&self.raft);
+        let event_loop_tx = self.event_loop_tx.clone();
+
+        self.executer.spawn(async move {
+            loop {
+                select! {
+                    event = event_loop_rx.select_next_some() => {
+                        match event {
+                            Event::ResetTimeout => {
+                                // Your code here.
+                            }
+                            event => {
+                                // Your code here.
+                                raft.lock().unwrap().handle_event(event);
+                            }
+                        }
+                    }
+                }
+                
+            }
+        }).expect("failed to spawn event loop");
     }
 
     /// the service using Raft (e.g. a k/v server) wants to start
@@ -320,6 +444,8 @@ impl Node {
         // self.raft.snapshot(index, snapshot)
         crate::your_code_here((index, snapshot));
     }
+
+    
 }
 
 #[async_trait::async_trait]
@@ -328,6 +454,18 @@ impl RaftService for Node {
     //
     // CAVEATS: Please avoid locking or sleeping here, it may jam the network.
     async fn request_vote(&self, args: RequestVoteArgs) -> labrpc::Result<RequestVoteReply> {
+        // Your code here (2A, 2B).
+        let raft = self.raft.lock().unwrap();
+        labrpc::Result::Ok(RequestVoteReply {
+            term: 0,
+            vote_granted: true,
+        })
+    }
+
+    // example AppendEntries RPC handler.
+    //
+    // CAVEATS: Please avoid locking or sleeping here, it may jam the network.
+    async fn append_entries(&self, args: AppendEntriesArgs) -> labrpc::Result<AppendEntriesReply> {
         // Your code here (2A, 2B).
         crate::your_code_here(args)
     }
