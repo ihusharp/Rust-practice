@@ -1,10 +1,14 @@
+use std::collections::HashSet;
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures::channel::oneshot;
 use futures::executor::ThreadPool;
 use futures::task::SpawnExt;
-use futures::{select, StreamExt};
+use futures::{select, FutureExt, StreamExt};
+use rand::Rng;
 
 #[cfg(test)]
 pub mod config;
@@ -51,6 +55,7 @@ impl State {
     }
 }
 
+#[derive(Debug)]
 pub enum Event {
     ResetTimeout,
     Timeout,
@@ -59,11 +64,51 @@ pub enum Event {
     AppendEntriesReply(usize, AppendEntriesReply),
 }
 
+#[derive(Debug)]
 pub enum RoleState {
     Follower,
-    Candidate,
-    Leader,
+    Candidate {
+        votes: HashSet<usize>,
+    },
+    Leader {
+        next_index: Vec<usize>,
+        match_index: Vec<usize>,
+    },
 }
+
+#[derive(Debug)]
+pub struct PersistentState {
+    current_term: u64,
+    voted_for: Option<usize>,
+    log: Vec<(u64, Entry)>,
+}
+
+impl PersistentState {
+    pub fn new() -> Self {
+        Self {
+            current_term: 0,
+            voted_for: None,
+            log: vec![Default::default()], // dummy entry at index 0
+        }
+    }
+}
+
+#[derive(Debug)]
+// SoftState provides state that is volatile and does not need to be persisted to the WAL.
+pub struct SoftState {
+    commit_index: u64,
+    last_applied: u64,
+}
+
+impl SoftState {
+    pub fn new() -> Self {
+        Self {
+            commit_index: 0,
+            last_applied: 0,
+        }
+    }
+}
+
 // A single Raft peer.
 pub struct Raft {
     // RPC end points of all peers
@@ -77,7 +122,14 @@ pub struct Raft {
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
     role: RoleState,
+    hard_state: PersistentState,
+    soft_state: SoftState,
 
+    // channels
+    event_loop_tx: Option<UnboundedSender<Event>>, // should always be Some
+    apply_ch: UnboundedSender<ApplyMsg>,
+
+    executor: ThreadPool,
 }
 
 impl Raft {
@@ -104,78 +156,47 @@ impl Raft {
             me,
             state: Arc::default(),
             role: RoleState::Follower,
+            hard_state: PersistentState::new(),
+            soft_state: SoftState::new(),
+            event_loop_tx: None,
+            executor: ThreadPool::new().unwrap(),
+            apply_ch,
         };
 
         // initialize from state persisted before a crash
         rf.restore(&raft_state);
 
-        // crate::your_code_here((rf, apply_ch));
+        rf.turn_follower();
+
         rf
     }
 
-    fn handle_event(&mut self, event: Event) {
-        match event {
-            Event::ResetTimeout => { unimplemented!(); },
-            Event::Timeout => {
-                self.handle_timeout();
-            },
-            Event::HeartBeat => {
-                self.handle_heartbeat();
-            }
-            Event::RequestVoteReply(from, reply) => {
-                self.handle_request_vote_reply(from, reply);
-            }
-            Event::AppendEntriesReply(from, reply) => {
-                self.handle_append_entries_reply(from, reply);
-            }
+    fn event_loop_tx(&self) -> &UnboundedSender<Event> {
+        self.event_loop_tx.as_ref().expect("no event loop sender")
+    }
+
+    fn update_term(&mut self, term: u64) {
+        self.hard_state.current_term = term;
+        self.hard_state.voted_for = None;
+    }
+
+    fn turn_leader(&mut self) {
+        let next_index = vec![self.hard_state.log.len(); self.peers.len()];
+        let match_index = vec![0; self.peers.len()];
+        self.role = RoleState::Leader {
+            next_index,
+            match_index,
         }
     }
 
-    fn handle_timeout(&mut self) {
-        match self.role {
-            RoleState::Follower => {
-                self.role = RoleState::Candidate;
-            }
-            RoleState::Candidate => {
-            }
-            RoleState::Leader => {
-            }
-        }
+    fn turn_candidate(&mut self) {
+        let votes = [self.me].iter().cloned().collect();
+        self.role = RoleState::Candidate { votes };
     }
 
-    fn handle_heartbeat(&mut self) {
-        match self.role {
-            RoleState::Follower => {
-            }
-            RoleState::Candidate => {
-            }
-            RoleState::Leader => {
-                // send heartbeat
-                for (i, peer) in self.peers.iter().enumerate() {
-                    if i == self.me {
-                        continue;
-                    }
-                    let mut args = AppendEntriesArgs::default();
-                    args.term = self.state.term;
-                    args.leader_id = self.me as u64;
-                    args.prev_log_index = 0;
-                    args.prev_log_term = 0;
-                    args.entries = vec![];
-                    args.leader_commit = 0;
-                    let peer = peer.clone();
-                    let me = self.me;
-                    let state = self.state.clone();
-                }
-            }
-        }
+    fn turn_follower(&mut self) {
+        self.role = RoleState::Follower;
     }
-    fn handle_request_vote_reply(&mut self, from: usize, reply: RequestVoteReply) {
-        
-    }
-    fn handle_append_entries_reply(&mut self, from: usize, reply: AppendEntriesReply) {
-        unimplemented!()
-    }
-    
 
     /// save Raft's persistent state to stable storage,
     /// where it can later be retrieved after a crash and restart.
@@ -277,9 +298,222 @@ impl Raft {
         crate::your_code_here((index, snapshot));
     }
 
-    fn handle_request_vote_request() -> RequestVoteReply {
-        // Your code here (2A, 2B).
-        crate::your_code_here(())
+    fn start_election(&mut self) {
+        println!("[start_election! {}]", self.me);
+        for (i, peer) in self.peers.iter().enumerate() {
+            if i == self.me {
+                continue;
+            }
+            let tx = self.event_loop_tx().clone();
+            let fut = peer.request_vote(&self.request_vote_args());
+            self.executor
+                .spawn(async move {
+                    if let Ok(reply) = fut.await {
+                        tx.unbounded_send(Event::RequestVoteReply(i, reply))
+                            .unwrap();
+                        // todo: rx may be closed
+                    }
+                })
+                .unwrap();
+        }
+    }
+}
+
+impl Raft {
+    fn request_vote_args(&self) -> RequestVoteArgs {
+        RequestVoteArgs {
+            term: self.hard_state.current_term,
+            candidate_id: self.me as u64,
+            last_log_index: self.hard_state.log.len() as u64 - 1,
+            last_log_term: self.hard_state.log.last().unwrap().0,
+        }
+    }
+
+    fn append_entries_args(&self) -> AppendEntriesArgs {
+        AppendEntriesArgs {
+            term: self.hard_state.current_term,
+            leader_id: self.me as u64,
+            prev_log_index: self.hard_state.log.len() as u64 - 1,
+            prev_log_term: self.hard_state.log.last().unwrap().0,
+            entries: vec![],
+            leader_commit_index: self.soft_state.commit_index,
+        }
+    }
+}
+
+impl Raft {
+    fn schedule_event(&mut self, event: Event) {
+        if let Err(e) = self.event_loop_tx().unbounded_send(event) {
+            error!("schedule event: {}", e);
+        }
+    }
+
+    fn handle_event(&mut self, event: Event) {
+        match event {
+            Event::ResetTimeout => unreachable!(), // already handled by timer
+            Event::Timeout => self.handle_timeout(),
+            Event::HeartBeat => self.handle_heartbeat(),
+            Event::RequestVoteReply(from, reply) => self.handle_request_vote_reply(from, reply),
+            Event::AppendEntriesReply(from, reply) => self.handle_append_entries_reply(from, reply),
+        }
+    }
+
+    fn handle_timeout(&mut self) {
+        match self.role {
+            RoleState::Follower | RoleState::Candidate { .. } => {
+                // start new election
+                self.turn_candidate();
+                self.update_term(self.hard_state.current_term + 1);
+                self.hard_state.voted_for = Some(self.me);
+
+                self.schedule_event(Event::ResetTimeout);
+                self.start_election();
+            }
+            _ => {} // no timeout for leader
+        }
+    }
+
+    // for leader to make sure peers are still alive
+    fn handle_heartbeat(&mut self) {
+        match self.role {
+            RoleState::Leader { .. } => self.append_entries(),
+            _ => {} // no heartbeat for follower and candidate
+        }
+    }
+
+    fn handle_request_vote_request(
+        &mut self,
+        args: RequestVoteArgs,
+    ) -> labrpc::Result<RequestVoteReply> {
+        println!("[handle_request_vote_request! {}] {:?}", self.me, args);
+        let vote_granted = {
+            if self.hard_state.current_term > args.term {
+                false
+            } else {
+                if args.term > self.hard_state.current_term {
+                    self.update_term(args.term);
+                    self.role = RoleState::Follower;
+                }
+                let voted_id = args.candidate_id as usize;
+                if self.hard_state.voted_for.is_none()
+                    || self.hard_state.voted_for == Some(voted_id)
+                {
+                    self.hard_state.voted_for = Some(voted_id);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        Ok(RequestVoteReply {
+            term: self.hard_state.current_term,
+            vote_granted,
+        })
+    }
+
+    fn handle_request_vote_reply(&mut self, from: usize, reply: RequestVoteReply) {
+        println!("[handle_request_vote_reply! {}] {:?}", self.me, reply);
+        if reply.term > self.hard_state.current_term {
+            self.update_term(reply.term);
+            self.role = RoleState::Follower;
+        }
+
+        match &mut self.role {
+            RoleState::Candidate { votes } => {
+                if reply.vote_granted && reply.term == self.hard_state.current_term {
+                    votes.insert(from);
+                    if votes.len() > self.peers.len() / 2 {
+                        self.turn_leader();
+                        self.schedule_event(Event::HeartBeat);
+                    }
+                }
+            }
+            _ => {} // no reply for follower and leader
+        }
+    }
+
+    fn handle_append_entries_request(
+        &mut self,
+        args: AppendEntriesArgs,
+    ) -> labrpc::Result<AppendEntriesReply> {
+        println!("[handle_append_entries! {}] {:?}", self.me, args);
+        let success = {
+            if self.hard_state.current_term > args.term {
+                false
+            } else {
+                if args.term > self.hard_state.current_term
+                || matches!(self.role, RoleState::Candidate { .. }) 
+                    && args.term == self.hard_state.current_term {
+                    self.update_term(args.term);
+                    self.turn_follower();
+                }
+                // TODO log replication
+                // if there is no conflict, append entries
+                // firstly make sure prevLogTerm and prevLogIndex match
+                // if args.prev_log_index == 0 || self.hard_state.log[args.prev_log_index as usize].0 == args.prev_log_term {
+                //     self.hard_state.log.truncate(args.prev_log_index as usize + 1);
+                //     for entry in args.entries {
+                //         self.hard_state.log.push((args.term, entry));
+                //     }
+                //     true
+                // } else {
+                //     false
+                // }
+
+                match self.role {
+                    RoleState::Follower { .. } => {
+                        self.schedule_event(Event::ResetTimeout);
+                        true
+                    }
+                    RoleState::Candidate { .. } => {
+                        unreachable!("candidate should turn into follower before")
+                    }
+                    RoleState::Leader { .. } => unreachable!("another leader with same term found"),
+                }
+            }
+        };
+
+        Ok(AppendEntriesReply {
+            term: self.hard_state.current_term,
+            success,
+        })
+    }
+
+    fn handle_append_entries_reply(&mut self, from: usize, reply: AppendEntriesReply) {
+        println!("[handle_append_entries_reply! {}] {:?}", self.me, reply);
+        if reply.term > self.hard_state.current_term {
+            self.update_term(reply.term);
+            self.turn_follower();
+        }
+
+        match &mut self.role {
+            RoleState::Leader {
+                next_index,
+                match_index,
+            } => {
+                // TODO
+            }
+            _ => {} // no reply for follower and candidate
+        }
+    }
+
+    fn append_entries(&mut self) {
+        for (i, peer) in self.peers.iter().enumerate() {
+            if i == self.me {
+                continue;
+            }
+            let tx = self.event_loop_tx().clone();
+            let fut = peer.append_entries(&self.append_entries_args());
+            self.executor
+                .spawn(async move {
+                    if let Ok(reply) = fut.await {
+                        tx.unbounded_send(Event::AppendEntriesReply(i, reply))
+                            .unwrap();
+                    }
+                })
+                .unwrap();
+        }
     }
 }
 
@@ -318,46 +552,73 @@ pub struct Node {
     // Your code here.
     raft: Arc<Mutex<Raft>>,
     event_loop_tx: UnboundedSender<Event>,
-    executer: ThreadPool,
+    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    executor: ThreadPool,
 }
 
 impl Node {
     /// Create a new raft service.
-    pub fn new(raft: Raft) -> Node {
+    pub fn new(mut raft: Raft) -> Node {
         // Your code here.
         let (event_loop_tx, event_loop_rx) = mpsc::unbounded();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        raft.event_loop_tx = Some(event_loop_tx.clone());
 
         let node = Node {
             raft: Arc::new(Mutex::new(raft)),
-            event_loop_tx: event_loop_tx,
-            executer: ThreadPool::new().unwrap(),
+            event_loop_tx,
+            shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
+            executor: ThreadPool::new().unwrap(),
         };
-        node.start_event_loop(event_loop_rx);
+        node.start_event_loop(event_loop_rx, shutdown_rx);
+
         node
     }
 
-    fn start_event_loop(&self, mut event_loop_rx: UnboundedReceiver<Event>) {
+    fn start_event_loop(
+        &self,
+        mut event_loop_rx: UnboundedReceiver<Event>,
+        mut shutdown_rx: oneshot::Receiver<()>,
+    ) {
         let raft = Arc::clone(&self.raft);
         let event_loop_tx = self.event_loop_tx.clone();
 
-        self.executer.spawn(async move {
-            loop {
-                select! {
-                    event = event_loop_rx.select_next_some() => {
-                        match event {
-                            Event::ResetTimeout => {
-                                // Your code here.
-                            }
-                            event => {
-                                // Your code here.
-                                raft.lock().unwrap().handle_event(event);
+        self.executor
+            .spawn(async move {
+                let build_rand_timeout_timer = || {
+                    futures_timer::Delay::new(Duration::from_millis(
+                        rand::thread_rng().gen_range(200, 500),
+                    ))
+                    .fuse()
+                };
+                let build_heartbeat_timer =
+                    || futures_timer::Delay::new(Duration::from_millis(50)).fuse();
+
+                let mut timeout_timer = build_rand_timeout_timer();
+                let mut heartbeat_timer = build_heartbeat_timer();
+
+                loop {
+                    select! {
+                        event = event_loop_rx.select_next_some() => {
+                            match event {
+                                Event::ResetTimeout =>  timeout_timer = build_rand_timeout_timer(),
+                                event => raft.lock().unwrap().handle_event(event),
                             }
                         }
+                        _ = timeout_timer => {
+                            event_loop_tx.unbounded_send(Event::Timeout).unwrap();
+                            timeout_timer = build_rand_timeout_timer();
+                        }
+                        _ = heartbeat_timer => {
+                            event_loop_tx.unbounded_send(Event::HeartBeat).unwrap();
+                            heartbeat_timer = build_heartbeat_timer();
+                        }
+                        _ = shutdown_rx => break,
                     }
                 }
-                
-            }
-        }).expect("failed to spawn event loop");
+            })
+            .expect("failed to spawn event loop");
     }
 
     /// the service using Raft (e.g. a k/v server) wants to start
@@ -379,7 +640,7 @@ impl Node {
         // Your code here.
         // Example:
         // self.raft.start(command)
-        crate::your_code_here(command)
+        self.raft.lock().unwrap().start(command)
     }
 
     /// The current term of this peer.
@@ -387,7 +648,7 @@ impl Node {
         // Your code here.
         // Example:
         // self.raft.term
-        crate::your_code_here(())
+        self.raft.lock().unwrap().hard_state.current_term
     }
 
     /// Whether this peer believes it is the leader.
@@ -395,7 +656,7 @@ impl Node {
         // Your code here.
         // Example:
         // self.raft.leader_id == self.id
-        crate::your_code_here(())
+        matches!(self.raft.lock().unwrap().role, RoleState::Leader { .. })
     }
 
     /// The current state of this peer.
@@ -416,6 +677,9 @@ impl Node {
     /// threads you generated with this Raft Node.
     pub fn kill(&self) {
         // Your code here, if desired.
+        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
     }
 
     /// A service wants to switch to snapshot.  
@@ -444,8 +708,6 @@ impl Node {
         // self.raft.snapshot(index, snapshot)
         crate::your_code_here((index, snapshot));
     }
-
-    
 }
 
 #[async_trait::async_trait]
@@ -454,19 +716,15 @@ impl RaftService for Node {
     //
     // CAVEATS: Please avoid locking or sleeping here, it may jam the network.
     async fn request_vote(&self, args: RequestVoteArgs) -> labrpc::Result<RequestVoteReply> {
-        // Your code here (2A, 2B).
-        let raft = self.raft.lock().unwrap();
-        labrpc::Result::Ok(RequestVoteReply {
-            term: 0,
-            vote_granted: true,
-        })
+        let mut raft = self.raft.lock().unwrap();
+        raft.handle_request_vote_request(args)
     }
 
     // example AppendEntries RPC handler.
     //
     // CAVEATS: Please avoid locking or sleeping here, it may jam the network.
     async fn append_entries(&self, args: AppendEntriesArgs) -> labrpc::Result<AppendEntriesReply> {
-        // Your code here (2A, 2B).
-        crate::your_code_here(args)
+        let mut raft = self.raft.lock().unwrap();
+        raft.handle_append_entries_request(args)
     }
 }

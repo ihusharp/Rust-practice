@@ -18,8 +18,7 @@ message RequestVoteReply {
 }
 
 message Entry {
-    uint64 term = 1;
-    bytes data = 2;
+    bytes data = 1;
 }
 
 message AppendEntriesArgs {
@@ -28,10 +27,10 @@ message AppendEntriesArgs {
     uint64 prevLogIndex = 3;
     uint64 prevLogTerm = 4;
     repeated Entry entries = 5;
-    uint64 leaderCommit = 6;
+    uint64 leaderCommitIndex = 6;
 }
 
 message AppendEntriesReply {
     uint64 term = 1;
-    uint64 success = 2;
+    bool success = 2;
 }

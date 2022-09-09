@@ -406,6 +406,7 @@ impl Config {
         let apply = apply_ch.for_each(move |cmd: raft::ApplyMsg| match cmd {
             raft::ApplyMsg::Command { data, index } => {
                 // debug!("apply {}", index);
+                println!("apply {}", index);
                 let entry = labcodec::decode(&data).expect("committed command is not an entry");
                 let mut s = storage.lock().unwrap();
                 for (j, log) in s.logs.iter().enumerate() {
