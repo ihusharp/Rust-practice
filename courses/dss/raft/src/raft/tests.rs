@@ -336,6 +336,7 @@ fn test_rejoin_2b() {
     let leader1 = cfg.check_one_leader();
     cfg.disconnect(leader1);
 
+    println!("--------------- step 1 ---------------");
     // make old leader try to agree on some entries
     let _ = cfg.rafts.lock().unwrap()[leader1]
         .as_ref()
@@ -350,9 +351,11 @@ fn test_rejoin_2b() {
         .unwrap()
         .start(&Entry { x: 104 });
 
+    println!("--------------- step 2 ---------------");
     // new leader commits, also for index=2
     cfg.one(Entry { x: 103 }, 2, true);
 
+    println!("--------------- step 3 ---------------");
     // new leader network failure
     let leader2 = cfg.check_one_leader();
     cfg.disconnect(leader2);
@@ -360,11 +363,13 @@ fn test_rejoin_2b() {
     // old leader connected again
     cfg.connect(leader1);
 
+    println!("--------------- step 4 ---------------");
     cfg.one(Entry { x: 104 }, 2, true);
 
     // all together now
     cfg.connect(leader2);
 
+    println!("--------------- step 5 ---------------");
     cfg.one(Entry { x: 105 }, servers, true);
 
     cfg.end();

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,9 +20,11 @@ use self::errors::*;
 use self::persister::*;
 use crate::proto::raftpb::*;
 
+
 /// As each Raft peer becomes aware that successive log entries are committed,
 /// the peer should send an `ApplyMsg` to the service (or tester) on the same
 /// server, via the `apply_ch` passed to `Raft::new`.
+#[derive(Debug)]
 pub enum ApplyMsg {
     Command {
         data: Vec<u8>,
@@ -60,8 +61,13 @@ pub enum Event {
     ResetTimeout,
     Timeout,
     HeartBeat,
+    HeartBeatReply(usize, AppendEntriesReply),
     RequestVoteReply(usize, RequestVoteReply),
-    AppendEntriesReply(usize, AppendEntriesReply),
+    AppendEntriesReply {
+        from: usize,
+        reply: labrpc::Result<AppendEntriesReply>,
+        new_next_index: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -80,7 +86,7 @@ pub enum RoleState {
 pub struct PersistentState {
     current_term: u64,
     voted_for: Option<usize>,
-    log: Vec<(u64, Entry)>,
+    log: Vec<Entry>,
 }
 
 impl PersistentState {
@@ -93,7 +99,6 @@ impl PersistentState {
     }
 }
 
-#[derive(Debug)]
 // SoftState provides state that is volatile and does not need to be persisted to the WAL.
 pub struct SoftState {
     commit_index: u64,
@@ -171,6 +176,26 @@ impl Raft {
         rf
     }
 
+    fn start<M>(&mut self, command: &M) -> Result<(u64, u64)>
+    where
+        M: labcodec::Message,
+    {
+        match &self.role {
+            RoleState::Leader { .. } => {
+                let mut data = Vec::new();
+                labcodec::encode(command, &mut data).map_err(Error::Encode)?;
+                let entry = Entry {
+                    term: self.hard_state.current_term,
+                    data,
+                };
+                self.hard_state.log.push(entry);
+                self.sync_log();
+                Ok((self.last_log_index(), self.last_log_term()))
+            }
+            _ => Err(Error::NotLeader),
+        }
+    }
+
     fn event_loop_tx(&self) -> &UnboundedSender<Event> {
         self.event_loop_tx.as_ref().expect("no event loop sender")
     }
@@ -227,62 +252,6 @@ impl Raft {
         // }
     }
 
-    /// example code to send a RequestVote RPC to a server.
-    /// server is the index of the target server in peers.
-    /// expects RPC arguments in args.
-    ///
-    /// The labrpc package simulates a lossy network, in which servers
-    /// may be unreachable, and in which requests and replies may be lost.
-    /// This method sends a request and waits for a reply. If a reply arrives
-    /// within a timeout interval, This method returns Ok(_); otherwise
-    /// this method returns Err(_). Thus this method may not return for a while.
-    /// An Err(_) return can be caused by a dead server, a live server that
-    /// can't be reached, a lost request, or a lost reply.
-    ///
-    /// This method is guaranteed to return (perhaps after a delay) *except* if
-    /// the handler function on the server side does not return.  Thus there
-    /// is no need to implement your own timeouts around this method.
-    ///
-    /// look at the comments in ../labrpc/src/lib.rs for more details.
-    fn send_request_vote(
-        &self,
-        server: usize,
-        args: RequestVoteArgs,
-    ) -> Receiver<Result<RequestVoteReply>> {
-        // Your code here if you want the rpc becomes async.
-        // Example:
-        // ```
-        // let peer = &self.peers[server];
-        // let peer_clone = peer.clone();
-        // let (tx, rx) = channel();
-        // peer.spawn(async move {
-        //     let res = peer_clone.request_vote(&args).await.map_err(Error::Rpc);
-        //     tx.send(res);
-        // });
-        // rx
-        // ```
-        let (tx, rx) = sync_channel::<Result<RequestVoteReply>>(1);
-        crate::your_code_here((server, args, tx, rx))
-    }
-
-    fn start<M>(&self, command: &M) -> Result<(u64, u64)>
-    where
-        M: labcodec::Message,
-    {
-        let index = 0;
-        let term = 0;
-        let is_leader = true;
-        let mut buf = vec![];
-        labcodec::encode(command, &mut buf).map_err(Error::Encode)?;
-        // Your code here (2B).
-
-        if is_leader {
-            Ok((index, term))
-        } else {
-            Err(Error::NotLeader)
-        }
-    }
-
     fn cond_install_snapshot(
         &mut self,
         last_included_term: u64,
@@ -300,10 +269,7 @@ impl Raft {
 
     fn start_election(&mut self) {
         println!("[start_election! {}]", self.me);
-        for (i, peer) in self.peers.iter().enumerate() {
-            if i == self.me {
-                continue;
-            }
+        for (i, peer) in self.other_peers() {
             let tx = self.event_loop_tx().clone();
             let fut = peer.request_vote(&self.request_vote_args());
             self.executor
@@ -320,23 +286,129 @@ impl Raft {
 }
 
 impl Raft {
+    fn last_log_term(&self) -> u64 {
+        self.hard_state.log.last().unwrap().term
+    }
+
+    fn last_log_index(&self) -> u64 {
+        (self.hard_state.log.len() -1 ) as u64
+    }
+
+    /// Determine whether the prev log of the AppendEntries RPC Caller
+    /// matches the current node's log.
+    /// If match returns true, otherwise it returns false.
+    ///
+    /// `args_prev_term` is the log term that Caller wants to match
+    /// `args_prev_index` is the log index that Caller wants to match
+    fn is_match(&self, args_prev_term: u64, args_prev_index: u64) -> bool {
+        return self.hard_state.log.get(args_prev_index as usize)
+                .map(|e| e.term) == Some(args_prev_term)
+    }
+
+    fn other_peers(&self) -> impl Iterator<Item = (usize, &RaftClient)> {
+        self.peers
+            .iter()
+            .enumerate()
+            .filter(move |(i, _)| i != &self.me)
+    }
+
+    fn commit_to_new_index(&mut self, new_index: u64) {
+        if new_index <= self.soft_state.commit_index {
+            return;
+        }
+
+        for i in self.soft_state.commit_index + 1..=new_index {
+            let msg = ApplyMsg::Command  {
+                data: self.hard_state.log[i as usize].data.clone(),
+                index: i,
+            };
+            self.apply_ch.unbounded_send(msg).unwrap();
+        }
+        self.soft_state.commit_index = new_index as u64;
+    }
+    
+    // maybe_commit attempts to advance the commit index. Returns true if
+    // the commit index changed.
+    fn maybe_commit(&mut self) {
+        if let RoleState::Leader { match_index, .. } = &self.role {
+            let mut new_commit_index = self.soft_state.commit_index;
+
+            // Find the max match index.
+            for cur_index in self.soft_state.commit_index..self.hard_state.log.len() as u64{
+                let quorum_cnt = 
+                    self.other_peers()
+                    .filter(|(i, _)| match_index[*i] >= cur_index as usize)
+                    .count()
+                    + 1;
+
+                let is_current_term = 
+                    self.hard_state.log[cur_index as usize].term == self.hard_state.current_term;
+                if is_current_term {
+                    if quorum_cnt > self.peers.len() / 2 {
+                        new_commit_index = cur_index;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            println!("[maybe_commit], new commit index is: {}", new_commit_index);
+            self.commit_to_new_index(new_commit_index);
+        }
+    }
+
+    fn sync_log(&mut self) {
+        self.other_peers().for_each(|(follower, _)| self.sync_log_for_peer(follower, false));
+    }
+
+    // sync log from leader to follower
+    fn sync_log_for_peer(&self, from: usize, timeout: bool) {
+        if let RoleState::Leader { next_index, .. } = &self.role {
+            let peer = &self.peers[from];
+            let tx = self.event_loop_tx().clone();
+            let fut = peer.append_entries(&self.append_entries_args(next_index[from]));
+            let new_next_index = self.hard_state.log.len();
+
+            self.executor
+                .spawn(async move {
+                    let reply_result = fut.await;
+                    if timeout {
+                        futures_timer::Delay::new(Duration::from_millis(500)).await;
+                    }
+                    // reply_result.index = new_next_index as u64;
+                    tx.unbounded_send(Event::AppendEntriesReply {
+                        from,
+                        reply: reply_result,
+                        new_next_index,
+                    }).unwrap();
+                })
+                .unwrap();
+
+        }
+    }
+}
+
+impl Raft {
     fn request_vote_args(&self) -> RequestVoteArgs {
         RequestVoteArgs {
             term: self.hard_state.current_term,
             candidate_id: self.me as u64,
-            last_log_index: self.hard_state.log.len() as u64 - 1,
-            last_log_term: self.hard_state.log.last().unwrap().0,
+            last_log_index: self.last_log_index(),
+            last_log_term: self.last_log_term(),
         }
     }
 
-    fn append_entries_args(&self) -> AppendEntriesArgs {
+    fn append_entries_args(&self, start_at: usize) -> AppendEntriesArgs {
+        let entries = self.hard_state.log[start_at..].iter().cloned().collect();
+        let prev_log_index = start_at - 1;
+
         AppendEntriesArgs {
             term: self.hard_state.current_term,
             leader_id: self.me as u64,
-            prev_log_index: self.hard_state.log.len() as u64 - 1,
-            prev_log_term: self.hard_state.log.last().unwrap().0,
-            entries: vec![],
-            leader_commit_index: self.soft_state.commit_index,
+            prev_log_index: prev_log_index as u64,
+            prev_log_term: self.hard_state.log[prev_log_index].term,
+            entries,
+            leader_commit_index: self.soft_state.commit_index as u64,
         }
     }
 }
@@ -353,8 +425,13 @@ impl Raft {
             Event::ResetTimeout => unreachable!(), // already handled by timer
             Event::Timeout => self.handle_timeout(),
             Event::HeartBeat => self.handle_heartbeat(),
+            Event::HeartBeatReply( .., reply) => self.handle_heartbeat_reply(reply),
             Event::RequestVoteReply(from, reply) => self.handle_request_vote_reply(from, reply),
-            Event::AppendEntriesReply(from, reply) => self.handle_append_entries_reply(from, reply),
+            Event::AppendEntriesReply {
+                from,
+                reply,
+                new_next_index,
+            } => self.handle_append_entries_reply(from, reply, new_next_index),
         }
     }
 
@@ -381,6 +458,14 @@ impl Raft {
         }
     }
 
+    fn handle_heartbeat_reply(&mut self, reply: AppendEntriesReply) {
+        println!("handle_heartbeat_reply: now id:{}, log is: {:?}", self.me, self.hard_state.log);
+        if reply.term > self.hard_state.current_term {
+            self.update_term(reply.term);
+            self.turn_follower();
+        }
+    }
+
     fn handle_request_vote_request(
         &mut self,
         args: RequestVoteArgs,
@@ -388,27 +473,30 @@ impl Raft {
         println!("[handle_request_vote_request! {}] {:?}", self.me, args);
         let vote_granted = {
             if self.hard_state.current_term > args.term {
-                false
+                None
             } else {
                 if args.term > self.hard_state.current_term {
                     self.update_term(args.term);
-                    self.role = RoleState::Follower;
+                    self.turn_follower()
                 }
                 let voted_id = args.candidate_id as usize;
-                if self.hard_state.voted_for.is_none()
-                    || self.hard_state.voted_for == Some(voted_id)
-                {
-                    self.hard_state.voted_for = Some(voted_id);
-                    true
+                // if self is candidate, then voted_for is already Some(me)
+                let not_voted_other = self.hard_state.voted_for.map(|v| v == voted_id) != Some(false);
+                // cand's log must be more up-to-date
+                let cand_up_to_date = (args.last_log_term, args.last_log_index)
+                    >= (self.last_log_term(), self.last_log_index());
+
+                if not_voted_other && cand_up_to_date {
+                    Some(voted_id)
                 } else {
-                    false
+                    None
                 }
             }
         };
 
         Ok(RequestVoteReply {
             term: self.hard_state.current_term,
-            vote_granted,
+            vote_granted: vote_granted.is_some(),
         })
     }
 
@@ -416,7 +504,7 @@ impl Raft {
         println!("[handle_request_vote_reply! {}] {:?}", self.me, reply);
         if reply.term > self.hard_state.current_term {
             self.update_term(reply.term);
-            self.role = RoleState::Follower;
+            self.turn_follower();
         }
 
         match &mut self.role {
@@ -437,9 +525,11 @@ impl Raft {
         &mut self,
         args: AppendEntriesArgs,
     ) -> labrpc::Result<AppendEntriesReply> {
-        println!("[handle_append_entries! {}] {:?}", self.me, args);
+        println!("[handle_append_entries! id: {}] {:?}", self.me, args);
+        // let mut index = self.hard_state.log.len() as u64;
         let success = {
             if self.hard_state.current_term > args.term {
+                // index = self.soft_state.commit_index;
                 false
             } else {
                 if args.term > self.hard_state.current_term
@@ -448,23 +538,33 @@ impl Raft {
                     self.update_term(args.term);
                     self.turn_follower();
                 }
-                // TODO log replication
-                // if there is no conflict, append entries
-                // firstly make sure prevLogTerm and prevLogIndex match
-                // if args.prev_log_index == 0 || self.hard_state.log[args.prev_log_index as usize].0 == args.prev_log_term {
-                //     self.hard_state.log.truncate(args.prev_log_index as usize + 1);
-                //     for entry in args.entries {
-                //         self.hard_state.log.push((args.term, entry));
-                //     }
-                //     true
-                // } else {
-                //     false
-                // }
 
                 match self.role {
-                    RoleState::Follower { .. } => {
+                    RoleState::Follower => {
                         self.schedule_event(Event::ResetTimeout);
-                        true
+
+                        // log replication
+                        // if there is no conflict, append entries
+                        // firstly make sure prevLogTerm and prevLogIndex match
+                        if !self.is_match(args.prev_log_term, args.prev_log_index) {
+                            false
+                        } else {
+                            // delete all entries after prevLogIndex
+                            while self.hard_state.log.len() as u64 > args.prev_log_index + 1 {
+                                self.hard_state.log.pop();
+                            }
+                            // append entries
+                            self.hard_state.log.extend(args.entries);
+
+                            println!("[handle_append_entries need to commit! id: {}]  now log is: {:?}", self.me, self.hard_state.log);
+                            if args.leader_commit_index > self.soft_state.commit_index {
+                                let new_commit_index = 
+                                    args.leader_commit_index.min(self.hard_state.log.len() as u64 - 1);
+                                self.commit_to_new_index(new_commit_index);
+                            }
+                            true
+                        }
+
                     }
                     RoleState::Candidate { .. } => {
                         unreachable!("candidate should turn into follower before")
@@ -480,35 +580,44 @@ impl Raft {
         })
     }
 
-    fn handle_append_entries_reply(&mut self, from: usize, reply: AppendEntriesReply) {
-        println!("[handle_append_entries_reply! {}] {:?}", self.me, reply);
-        if reply.term > self.hard_state.current_term {
-            self.update_term(reply.term);
-            self.turn_follower();
-        }
-
-        match &mut self.role {
-            RoleState::Leader {
-                next_index,
-                match_index,
-            } => {
-                // TODO
+    fn handle_append_entries_reply(&mut self, from: usize, reply: labrpc::Result<AppendEntriesReply>, index: usize) {
+        println!("[handle_append_entries_reply! id: {}] index: {}, reply: {:?}", self.me, index, reply);
+        match reply {
+            Ok(reply) => {
+                if reply.term > self.hard_state.current_term {
+                    self.update_term(reply.term);
+                    self.turn_follower();
+                }
+        
+                match &mut self.role {
+                    RoleState::Leader { next_index, match_index } => {
+                        if reply.success {
+                            match_index[from] = index - 1;
+                            next_index[from] = index;
+                            self.maybe_commit();
+                        } else {
+                            next_index[from] = next_index[from].saturating_sub(1);
+                            self.sync_log_for_peer(from, false)
+                        }
+                    }
+                    _ => {},
+                }
             }
-            _ => {} // no reply for follower and candidate
+            Err(err) => {
+                println!("[handle_append_entries_reply] err is: {}", err);
+                self.sync_log_for_peer(from, true)
+            }
         }
     }
 
     fn append_entries(&mut self) {
-        for (i, peer) in self.peers.iter().enumerate() {
-            if i == self.me {
-                continue;
-            }
+        for (i, peer) in self.other_peers() {
             let tx = self.event_loop_tx().clone();
-            let fut = peer.append_entries(&self.append_entries_args());
+            let fut = peer.append_entries(&self.append_entries_args(self.hard_state.log.len()));
             self.executor
                 .spawn(async move {
                     if let Ok(reply) = fut.await {
-                        tx.unbounded_send(Event::AppendEntriesReply(i, reply))
+                        tx.unbounded_send(Event::HeartBeatReply(i, reply))
                             .unwrap();
                     }
                 })
@@ -524,7 +633,7 @@ impl Raft {
         let _ = self.start(&0);
         let _ = self.cond_install_snapshot(0, 0, &[]);
         let _ = self.snapshot(0, &[]);
-        let _ = self.send_request_vote(0, Default::default());
+        // let _ = self.send_request_vote(0, Default::default());
         self.persist();
         let _ = &self.state;
         let _ = &self.me;
@@ -586,14 +695,16 @@ impl Node {
 
         self.executor
             .spawn(async move {
+                // We suggest ElectionTick = 10 * HeartbeatTick to avoid
+	            // unnecessary leader switching.
                 let build_rand_timeout_timer = || {
                     futures_timer::Delay::new(Duration::from_millis(
-                        rand::thread_rng().gen_range(200, 500),
+                        rand::thread_rng().gen_range(1000, 1500),
                     ))
                     .fuse()
                 };
                 let build_heartbeat_timer =
-                    || futures_timer::Delay::new(Duration::from_millis(50)).fuse();
+                    || futures_timer::Delay::new(Duration::from_millis(100)).fuse();
 
                 let mut timeout_timer = build_rand_timeout_timer();
                 let mut heartbeat_timer = build_heartbeat_timer();
