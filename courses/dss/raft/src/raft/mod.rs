@@ -12,17 +12,16 @@ use rand::Rng;
 pub mod config;
 pub mod errors;
 pub mod persister;
+mod states;
 #[cfg(test)]
 mod tests;
-mod states;
 
 use self::errors::*;
 use self::persister::*;
-use crate::proto::raftpb::*;
 use self::states::*;
+use crate::proto::raftpb::*;
 
 pub use self::states::State;
-
 
 /// As each Raft peer becomes aware that successive log entries are committed,
 /// the peer should send an `ApplyMsg` to the service (or tester) on the same
@@ -41,7 +40,6 @@ pub enum ApplyMsg {
     },
 }
 
-
 // A single Raft peer.
 pub struct Raft {
     // RPC end points of all peers
@@ -50,7 +48,6 @@ pub struct Raft {
     persister: Box<dyn Persister>,
     // this peer's index into peers[]
     me: usize,
-    state: Arc<State>,
     // Your data here (2A, 2B, 2C).
     // Look at the paper's Figure 2 for a description of what
     // state a Raft server must maintain.
@@ -87,7 +84,6 @@ impl Raft {
             peers,
             persister,
             me,
-            state: Arc::default(),
             role: RoleState::Follower,
             hard_state: PersistentState::new(),
             soft_state: SoftState::new(),
@@ -150,7 +146,9 @@ impl Raft {
             self.executor
                 .spawn(async move {
                     let reply = fut.await;
-                    let _ = tx.unbounded_send(Event::RequestVoteReply(i, reply)).unwrap();
+                    let _ = tx
+                        .unbounded_send(Event::RequestVoteReply(i, reply))
+                        .unwrap();
                 })
                 .unwrap();
         }
@@ -187,28 +185,18 @@ impl Raft {
     /// see paper's Figure 2 for a description of what should be persistent.
     fn persist(&mut self) {
         // Your code here (2C).
-        // Example:
-        // labcodec::encode(&self.xxx, &mut data).unwrap();
-        // labcodec::encode(&self.yyy, &mut data).unwrap();
-        // self.persister.save_raft_state(data);
+        let mut data = Vec::new();
+        labcodec::encode(&self.hard_state, &mut data).unwrap();
+        self.persister.save_raft_state(data);
     }
 
     /// restore previously persisted state.
     fn restore(&mut self, data: &[u8]) {
         if data.is_empty() {
-            // bootstrap without any state?
+            return;
         }
         // Your code here (2C).
-        // Example:
-        // match labcodec::decode(data) {
-        //     Ok(o) => {
-        //         self.xxx = o.xxx;
-        //         self.yyy = o.yyy;
-        //     }
-        //     Err(e) => {
-        //         panic!("{:?}", e);
-        //     }
-        // }
+        self.hard_state = labcodec::decode(data).unwrap();
     }
 
     fn last_log_term(&self) -> u64 {
@@ -216,7 +204,7 @@ impl Raft {
     }
 
     fn last_log_index(&self) -> u64 {
-        (self.hard_state.log.len() -1 ) as u64
+        (self.hard_state.log.len() - 1) as u64
     }
 
     /// Determine whether the prev log of the AppendEntries RPC Caller
@@ -226,8 +214,12 @@ impl Raft {
     /// `args_prev_term` is the log term that Caller wants to match
     /// `args_prev_index` is the log index that Caller wants to match
     fn is_match(&self, args_prev_term: u64, args_prev_index: u64) -> bool {
-        return self.hard_state.log.get(args_prev_index as usize)
-                .map(|e| e.term) == Some(args_prev_term)
+        return self
+            .hard_state
+            .log
+            .get(args_prev_index as usize)
+            .map(|e| e.term)
+            == Some(args_prev_term);
     }
 }
 
@@ -246,7 +238,7 @@ impl Raft {
         }
 
         for i in self.soft_state.commit_index + 1..=new_index {
-            let msg = ApplyMsg::Command  {
+            let msg = ApplyMsg::Command {
                 data: self.hard_state.log[i as usize].data.clone(),
                 index: i,
             };
@@ -254,7 +246,7 @@ impl Raft {
         }
         self.soft_state.commit_index = new_index as u64;
     }
-    
+
     // maybe_commit attempts to advance the commit index. Returns true if
     // the commit index changed.
     fn maybe_commit(&mut self) {
@@ -262,14 +254,14 @@ impl Raft {
             let mut new_commit_index = self.soft_state.commit_index;
 
             // Find the max match index.
-            for cur_index in self.soft_state.commit_index..self.hard_state.log.len() as u64{
-                let quorum_cnt = 
-                    self.other_peers()
+            for cur_index in self.soft_state.commit_index..self.hard_state.log.len() as u64 {
+                let quorum_cnt = self
+                    .other_peers()
                     .filter(|(i, _)| match_index[*i] >= cur_index as usize)
                     .count()
                     + 1;
 
-                let is_current_term = 
+                let is_current_term =
                     self.hard_state.log[cur_index as usize].term == self.hard_state.current_term;
                 if is_current_term {
                     if quorum_cnt > self.peers.len() / 2 {
@@ -330,6 +322,7 @@ impl Raft {
                 reply,
                 new_next_index,
             } => self.handle_append_entries_reply(from, reply, new_next_index),
+            Event::ForcePersist => self.persist(),
         }
     }
 
@@ -339,7 +332,7 @@ impl Raft {
                 // start new election
                 self.turn_candidate();
                 self.update_term(self.hard_state.current_term + 1);
-                self.hard_state.voted_for = Some(self.me);
+                self.hard_state.voted_for = Some(self.me as u64);
 
                 self.schedule_event(Event::ResetTimeout);
                 self.start_election();
@@ -354,30 +347,31 @@ impl Raft {
             RoleState::Leader { .. } => self.heart_beat_sync_log(),
             _ => {} // no heartbeat for follower and candidate
         }
+        self.persist();
     }
 
-        // sync log from leader to follower when heartbeat
-        fn heart_beat_sync_log(&mut self) {
-            if let RoleState::Leader { next_index, .. } = &self.role {
-                for (i, peer) in self.other_peers() {
-                    let tx = self.event_loop_tx().clone();
-                    let args = self.append_entries_args(next_index[i]);
-                    let fut = peer.append_entries(&args);
-                    let new_next_index = self.hard_state.log.len();
-    
-                    self.executor
-                        .spawn(async move {
-                            let reply = fut.await;
-                            let _ = tx.unbounded_send(Event::AppendEntriesReply {
-                                from: i,
-                                reply,
-                                new_next_index
-                            });
-                        })
-                        .unwrap();
-                }
+    // sync log from leader to follower when heartbeat
+    fn heart_beat_sync_log(&mut self) {
+        if let RoleState::Leader { next_index, .. } = &self.role {
+            for (i, peer) in self.other_peers() {
+                let tx = self.event_loop_tx().clone();
+                let args = self.append_entries_args(next_index[i]);
+                let fut = peer.append_entries(&args);
+                let new_next_index = self.hard_state.log.len();
+
+                self.executor
+                    .spawn(async move {
+                        let reply = fut.await;
+                        let _ = tx.unbounded_send(Event::AppendEntriesReply {
+                            from: i,
+                            reply,
+                            new_next_index,
+                        });
+                    })
+                    .unwrap();
             }
         }
+    }
 
     fn handle_request_vote_request(
         &mut self,
@@ -392,9 +386,10 @@ impl Raft {
                     self.update_term(args.term);
                     self.turn_follower()
                 }
-                let voted_id = args.candidate_id as usize;
+                let voted_id = args.candidate_id;
                 // if self is candidate, then voted_for is already Some(me)
-                let not_voted_other = self.hard_state.voted_for.map(|v| v == voted_id) != Some(false);
+                let not_voted_other =
+                    self.hard_state.voted_for.map(|v| v == voted_id) != Some(false);
                 // cand's log must be more up-to-date
                 let cand_up_to_date = (args.last_log_term, args.last_log_index)
                     >= (self.last_log_term(), self.last_log_index());
@@ -421,7 +416,7 @@ impl Raft {
                     self.update_term(reply.term);
                     self.turn_follower();
                 }
-        
+
                 match &mut self.role {
                     RoleState::Candidate { votes } => {
                         if reply.vote_granted && reply.term == self.hard_state.current_term {
@@ -453,8 +448,9 @@ impl Raft {
                 false
             } else {
                 if args.term > self.hard_state.current_term
-                || matches!(self.role, RoleState::Candidate { .. }) 
-                    && args.term == self.hard_state.current_term {
+                    || matches!(self.role, RoleState::Candidate { .. })
+                        && args.term == self.hard_state.current_term
+                {
                     self.update_term(args.term);
                     self.turn_follower();
                 }
@@ -476,15 +472,18 @@ impl Raft {
                             // append entries
                             self.hard_state.log.extend(args.entries);
 
-                            println!("[handle_append_entries need to commit! id: {}]  now log is: {:?}", self.me, self.hard_state.log);
+                            println!(
+                                "[handle_append_entries need to commit! id: {}]  now log is: {:?}",
+                                self.me, self.hard_state.log
+                            );
                             if args.leader_commit_index > self.soft_state.commit_index {
-                                let new_commit_index = 
-                                    args.leader_commit_index.min(self.hard_state.log.len() as u64 - 1);
+                                let new_commit_index = args
+                                    .leader_commit_index
+                                    .min(self.hard_state.log.len() as u64 - 1);
                                 self.commit_to_new_index(new_commit_index);
                             }
                             true
                         }
-
                     }
                     RoleState::Candidate { .. } => {
                         unreachable!("candidate should turn into follower before")
@@ -500,17 +499,28 @@ impl Raft {
         })
     }
 
-    fn handle_append_entries_reply(&mut self, from: usize, reply: labrpc::Result<AppendEntriesReply>, index: usize) {
-        println!("[handle_append_entries_reply! id: {}] index: {}, reply: {:?}", self.me, index, reply);
+    fn handle_append_entries_reply(
+        &mut self,
+        from: usize,
+        reply: labrpc::Result<AppendEntriesReply>,
+        index: usize,
+    ) {
+        println!(
+            "[handle_append_entries_reply! id: {}] index: {}, reply: {:?}",
+            self.me, index, reply
+        );
         match reply {
             Ok(reply) => {
                 if reply.term > self.hard_state.current_term {
                     self.update_term(reply.term);
                     self.turn_follower();
                 }
-        
+
                 match &mut self.role {
-                    RoleState::Leader { next_index, match_index } => {
+                    RoleState::Leader {
+                        next_index,
+                        match_index,
+                    } => {
                         if reply.success {
                             match_index[from] = index - 1;
                             next_index[from] = index;
@@ -519,7 +529,7 @@ impl Raft {
                             next_index[from] = next_index[from].saturating_sub(1);
                         }
                     }
-                    _ => {},
+                    _ => {}
                 }
             }
             Err(err) => {
@@ -528,23 +538,6 @@ impl Raft {
         }
     }
 }
-
-impl Raft {
-    /// Only for suppressing deadcode warnings.
-    #[doc(hidden)]
-    pub fn __suppress_deadcode(&mut self) {
-        let _ = self.start(&0);
-        let _ = self.cond_install_snapshot(0, 0, &[]);
-        let _ = self.snapshot(0, &[]);
-        // let _ = self.send_request_vote(0, Default::default());
-        self.persist();
-        let _ = &self.state;
-        let _ = &self.me;
-        let _ = &self.persister;
-        let _ = &self.peers;
-    }
-}
-
 
 #[derive(Clone)]
 pub struct Node {
@@ -586,7 +579,7 @@ impl Node {
         self.executor
             .spawn(async move {
                 // We suggest ElectionTick = 10 * HeartbeatTick to avoid
-	            // unnecessary leader switching.
+                // unnecessary leader switching.
                 let build_rand_timeout_timer = || {
                     futures_timer::Delay::new(Duration::from_millis(
                         rand::thread_rng().gen_range(1000, 1500),
@@ -615,7 +608,10 @@ impl Node {
                             event_loop_tx.unbounded_send(Event::HeartBeat).unwrap();
                             heartbeat_timer = build_heartbeat_timer();
                         }
-                        _ = shutdown_rx => break,
+                        _ = shutdown_rx => {
+                            let mut raft = raft.lock().unwrap();
+                            raft.handle_event(Event::ForcePersist);
+                        }
                     }
                 }
             })
