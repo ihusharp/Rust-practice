@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,10 +14,14 @@ pub mod errors;
 pub mod persister;
 #[cfg(test)]
 mod tests;
+mod states;
 
 use self::errors::*;
 use self::persister::*;
 use crate::proto::raftpb::*;
+use self::states::*;
+
+pub use self::states::State;
 
 
 /// As each Raft peer becomes aware that successive log entries are committed,
@@ -38,81 +41,6 @@ pub enum ApplyMsg {
     },
 }
 
-/// State of a raft peer.
-#[derive(Default, Clone, Debug)]
-pub struct State {
-    pub term: u64,
-    pub is_leader: bool,
-}
-
-impl State {
-    /// The current term of this peer.
-    pub fn term(&self) -> u64 {
-        self.term
-    }
-    /// Whether this peer believes it is the leader.
-    pub fn is_leader(&self) -> bool {
-        self.is_leader
-    }
-}
-
-#[derive(Debug)]
-pub enum Event {
-    ResetTimeout,
-    Timeout,
-    HeartBeat,
-    HeartBeatReply(usize, AppendEntriesReply),
-    RequestVoteReply(usize, RequestVoteReply),
-    AppendEntriesReply {
-        from: usize,
-        reply: labrpc::Result<AppendEntriesReply>,
-        new_next_index: usize,
-    },
-}
-
-#[derive(Debug)]
-pub enum RoleState {
-    Follower,
-    Candidate {
-        votes: HashSet<usize>,
-    },
-    Leader {
-        next_index: Vec<usize>,
-        match_index: Vec<usize>,
-    },
-}
-
-#[derive(Debug)]
-pub struct PersistentState {
-    current_term: u64,
-    voted_for: Option<usize>,
-    log: Vec<Entry>,
-}
-
-impl PersistentState {
-    pub fn new() -> Self {
-        Self {
-            current_term: 0,
-            voted_for: None,
-            log: vec![Default::default()], // dummy entry at index 0
-        }
-    }
-}
-
-// SoftState provides state that is volatile and does not need to be persisted to the WAL.
-pub struct SoftState {
-    commit_index: u64,
-    last_applied: u64,
-}
-
-impl SoftState {
-    pub fn new() -> Self {
-        Self {
-            commit_index: 0,
-            last_applied: 0,
-        }
-    }
-}
 
 // A single Raft peer.
 pub struct Raft {
@@ -189,7 +117,6 @@ impl Raft {
                     data,
                 };
                 self.hard_state.log.push(entry);
-                self.sync_log();
                 Ok((self.last_log_index(), self.last_log_term()))
             }
             _ => Err(Error::NotLeader),
@@ -200,6 +127,38 @@ impl Raft {
         self.event_loop_tx.as_ref().expect("no event loop sender")
     }
 
+    fn cond_install_snapshot(
+        &mut self,
+        last_included_term: u64,
+        last_included_index: u64,
+        snapshot: &[u8],
+    ) -> bool {
+        // Your code here (2D).
+        crate::your_code_here((last_included_term, last_included_index, snapshot));
+    }
+
+    fn snapshot(&mut self, index: u64, snapshot: &[u8]) {
+        // Your code here (2D).
+        crate::your_code_here((index, snapshot));
+    }
+
+    fn start_election(&mut self) {
+        println!("[start_election! {}]", self.me);
+        for (i, peer) in self.other_peers() {
+            let tx = self.event_loop_tx().clone();
+            let fut = peer.request_vote(&self.request_vote_args());
+            self.executor
+                .spawn(async move {
+                    let reply = fut.await;
+                    let _ = tx.unbounded_send(Event::RequestVoteReply(i, reply)).unwrap();
+                })
+                .unwrap();
+        }
+    }
+}
+
+// state actions
+impl Raft {
     fn update_term(&mut self, term: u64) {
         self.hard_state.current_term = term;
         self.hard_state.voted_for = None;
@@ -252,40 +211,6 @@ impl Raft {
         // }
     }
 
-    fn cond_install_snapshot(
-        &mut self,
-        last_included_term: u64,
-        last_included_index: u64,
-        snapshot: &[u8],
-    ) -> bool {
-        // Your code here (2D).
-        crate::your_code_here((last_included_term, last_included_index, snapshot));
-    }
-
-    fn snapshot(&mut self, index: u64, snapshot: &[u8]) {
-        // Your code here (2D).
-        crate::your_code_here((index, snapshot));
-    }
-
-    fn start_election(&mut self) {
-        println!("[start_election! {}]", self.me);
-        for (i, peer) in self.other_peers() {
-            let tx = self.event_loop_tx().clone();
-            let fut = peer.request_vote(&self.request_vote_args());
-            self.executor
-                .spawn(async move {
-                    if let Ok(reply) = fut.await {
-                        tx.unbounded_send(Event::RequestVoteReply(i, reply))
-                            .unwrap();
-                        // todo: rx may be closed
-                    }
-                })
-                .unwrap();
-        }
-    }
-}
-
-impl Raft {
     fn last_log_term(&self) -> u64 {
         self.hard_state.log.last().unwrap().term
     }
@@ -304,7 +229,10 @@ impl Raft {
         return self.hard_state.log.get(args_prev_index as usize)
                 .map(|e| e.term) == Some(args_prev_term)
     }
+}
 
+// assit functions
+impl Raft {
     fn other_peers(&self) -> impl Iterator<Item = (usize, &RaftClient)> {
         self.peers
             .iter()
@@ -356,36 +284,6 @@ impl Raft {
             self.commit_to_new_index(new_commit_index);
         }
     }
-
-    fn sync_log(&mut self) {
-        self.other_peers().for_each(|(follower, _)| self.sync_log_for_peer(follower, false));
-    }
-
-    // sync log from leader to follower
-    fn sync_log_for_peer(&self, from: usize, timeout: bool) {
-        if let RoleState::Leader { next_index, .. } = &self.role {
-            let peer = &self.peers[from];
-            let tx = self.event_loop_tx().clone();
-            let fut = peer.append_entries(&self.append_entries_args(next_index[from]));
-            let new_next_index = self.hard_state.log.len();
-
-            self.executor
-                .spawn(async move {
-                    let reply_result = fut.await;
-                    if timeout {
-                        futures_timer::Delay::new(Duration::from_millis(500)).await;
-                    }
-                    // reply_result.index = new_next_index as u64;
-                    tx.unbounded_send(Event::AppendEntriesReply {
-                        from,
-                        reply: reply_result,
-                        new_next_index,
-                    }).unwrap();
-                })
-                .unwrap();
-
-        }
-    }
 }
 
 impl Raft {
@@ -413,6 +311,7 @@ impl Raft {
     }
 }
 
+// event actions
 impl Raft {
     fn schedule_event(&mut self, event: Event) {
         if let Err(e) = self.event_loop_tx().unbounded_send(event) {
@@ -423,9 +322,8 @@ impl Raft {
     fn handle_event(&mut self, event: Event) {
         match event {
             Event::ResetTimeout => unreachable!(), // already handled by timer
-            Event::Timeout => self.handle_timeout(),
+            Event::ElectionTimeout => self.handle_election_timeout(),
             Event::HeartBeat => self.handle_heartbeat(),
-            Event::HeartBeatReply( .., reply) => self.handle_heartbeat_reply(reply),
             Event::RequestVoteReply(from, reply) => self.handle_request_vote_reply(from, reply),
             Event::AppendEntriesReply {
                 from,
@@ -435,7 +333,7 @@ impl Raft {
         }
     }
 
-    fn handle_timeout(&mut self) {
+    fn handle_election_timeout(&mut self) {
         match self.role {
             RoleState::Follower | RoleState::Candidate { .. } => {
                 // start new election
@@ -453,18 +351,33 @@ impl Raft {
     // for leader to make sure peers are still alive
     fn handle_heartbeat(&mut self) {
         match self.role {
-            RoleState::Leader { .. } => self.append_entries(),
+            RoleState::Leader { .. } => self.heart_beat_sync_log(),
             _ => {} // no heartbeat for follower and candidate
         }
     }
 
-    fn handle_heartbeat_reply(&mut self, reply: AppendEntriesReply) {
-        println!("handle_heartbeat_reply: now id:{}, log is: {:?}", self.me, self.hard_state.log);
-        if reply.term > self.hard_state.current_term {
-            self.update_term(reply.term);
-            self.turn_follower();
+        // sync log from leader to follower when heartbeat
+        fn heart_beat_sync_log(&mut self) {
+            if let RoleState::Leader { next_index, .. } = &self.role {
+                for (i, peer) in self.other_peers() {
+                    let tx = self.event_loop_tx().clone();
+                    let args = self.append_entries_args(next_index[i]);
+                    let fut = peer.append_entries(&args);
+                    let new_next_index = self.hard_state.log.len();
+    
+                    self.executor
+                        .spawn(async move {
+                            let reply = fut.await;
+                            let _ = tx.unbounded_send(Event::AppendEntriesReply {
+                                from: i,
+                                reply,
+                                new_next_index
+                            });
+                        })
+                        .unwrap();
+                }
+            }
         }
-    }
 
     fn handle_request_vote_request(
         &mut self,
@@ -500,24 +413,31 @@ impl Raft {
         })
     }
 
-    fn handle_request_vote_reply(&mut self, from: usize, reply: RequestVoteReply) {
+    fn handle_request_vote_reply(&mut self, from: usize, reply: labrpc::Result<RequestVoteReply>) {
         println!("[handle_request_vote_reply! {}] {:?}", self.me, reply);
-        if reply.term > self.hard_state.current_term {
-            self.update_term(reply.term);
-            self.turn_follower();
-        }
-
-        match &mut self.role {
-            RoleState::Candidate { votes } => {
-                if reply.vote_granted && reply.term == self.hard_state.current_term {
-                    votes.insert(from);
-                    if votes.len() > self.peers.len() / 2 {
-                        self.turn_leader();
-                        self.schedule_event(Event::HeartBeat);
+        match reply {
+            Ok(reply) => {
+                if reply.term > self.hard_state.current_term {
+                    self.update_term(reply.term);
+                    self.turn_follower();
+                }
+        
+                match &mut self.role {
+                    RoleState::Candidate { votes } => {
+                        if reply.vote_granted && reply.term == self.hard_state.current_term {
+                            votes.insert(from);
+                            if votes.len() > self.peers.len() / 2 {
+                                self.turn_leader();
+                                self.schedule_event(Event::HeartBeat);
+                            }
+                        }
                     }
+                    _ => {} // no reply for follower and leader
                 }
             }
-            _ => {} // no reply for follower and leader
+            Err(err) => {
+                println!("request vote -> err: {}", err)
+            }
         }
     }
 
@@ -597,7 +517,6 @@ impl Raft {
                             self.maybe_commit();
                         } else {
                             next_index[from] = next_index[from].saturating_sub(1);
-                            self.sync_log_for_peer(from, false)
                         }
                     }
                     _ => {},
@@ -605,23 +524,7 @@ impl Raft {
             }
             Err(err) => {
                 println!("[handle_append_entries_reply] err is: {}", err);
-                self.sync_log_for_peer(from, true)
             }
-        }
-    }
-
-    fn append_entries(&mut self) {
-        for (i, peer) in self.other_peers() {
-            let tx = self.event_loop_tx().clone();
-            let fut = peer.append_entries(&self.append_entries_args(self.hard_state.log.len()));
-            self.executor
-                .spawn(async move {
-                    if let Ok(reply) = fut.await {
-                        tx.unbounded_send(Event::HeartBeatReply(i, reply))
-                            .unwrap();
-                    }
-                })
-                .unwrap();
         }
     }
 }
@@ -642,20 +545,7 @@ impl Raft {
     }
 }
 
-// Choose concurrency paradigm.
-//
-// You can either drive the raft state machine by the rpc framework,
-//
-// ```rust
-// struct Node { raft: Arc<Mutex<Raft>> }
-// ```
-//
-// or spawn a new thread runs the raft state machine and communicate via
-// a channel.
-//
-// ```rust
-// struct Node { sender: Sender<Msg> }
-// ```
+
 #[derive(Clone)]
 pub struct Node {
     // Your code here.
@@ -718,7 +608,7 @@ impl Node {
                             }
                         }
                         _ = timeout_timer => {
-                            event_loop_tx.unbounded_send(Event::Timeout).unwrap();
+                            event_loop_tx.unbounded_send(Event::ElectionTimeout).unwrap();
                             timeout_timer = build_rand_timeout_timer();
                         }
                         _ = heartbeat_timer => {
