@@ -1,3 +1,10 @@
+/*
+ * @Descripttion: 
+ * @Author: HuSharp
+ * @Date: 2022-09-13 22:19:18
+ * @LastEditTime: 2022-09-13 22:37:51
+ * @@Email: ihusharp@gmail.com
+ */
 use std::io::Cursor;
 
 use bytes::BytesMut;
@@ -63,7 +70,6 @@ impl Connection {
 
     pub async fn write_frame(&mut self, frame: &Frame) -> io::Result<()> {
         match frame {
-            
             Frame::Error(val) => {
                 self.stream.write_u8(b'-').await?;
                 self.stream.write_all(val.as_bytes()).await?;
