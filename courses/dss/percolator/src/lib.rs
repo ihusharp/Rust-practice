@@ -15,3 +15,10 @@ mod tests;
 mod msg {
     include!(concat!(env!("OUT_DIR"), "/msg.rs"));
 }
+
+use lazy_static::lazy_static;
+use tokio::runtime::Runtime;
+
+lazy_static! {
+    static ref RUNTIME: Runtime = Runtime::new().unwrap();
+}

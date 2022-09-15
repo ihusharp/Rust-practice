@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ const TTL: u64 = Duration::from_millis(100).as_nanos() as u64;
 #[derive(Clone, Default)]
 pub struct TimestampOracle {
     // You definitions here if needed.
+    timestamp_generator: Arc<AtomicU64>,
 }
 
 #[async_trait::async_trait]
@@ -21,7 +23,9 @@ impl timestamp::Service for TimestampOracle {
     // example get_timestamp RPC handler.
     async fn get_timestamp(&self, _: TimestampRequest) -> labrpc::Result<TimestampResponse> {
         // Your code here.
-        unimplemented!()
+        Ok(TimestampResponse {
+            timestamp: self.timestamp_generator.fetch_add(1, Ordering::Relaxed),
+        })
     }
 }
 
@@ -33,9 +37,6 @@ pub enum Value {
     Timestamp(u64),
     Vector(Vec<u8>),
 }
-
-#[derive(Debug, Clone)]
-pub struct Write(Vec<u8>, Vec<u8>);
 
 pub enum Column {
     Write,
