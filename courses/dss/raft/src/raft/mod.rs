@@ -417,17 +417,14 @@ impl Raft {
                     self.turn_follower();
                 }
 
-                match &mut self.role {
-                    RoleState::Candidate { votes } => {
-                        if reply.vote_granted && reply.term == self.hard_state.current_term {
-                            votes.insert(from);
-                            if votes.len() > self.peers.len() / 2 {
-                                self.turn_leader();
-                                self.schedule_event(Event::HeartBeat);
-                            }
+                if let RoleState::Candidate { votes } = &mut self.role {
+                    if reply.vote_granted && reply.term == self.hard_state.current_term {
+                        votes.insert(from);
+                        if votes.len() > self.peers.len() / 2 {
+                            self.turn_leader();
+                            self.schedule_event(Event::HeartBeat);
                         }
                     }
-                    _ => {} // no reply for follower and leader
                 }
             }
             Err(err) => {
@@ -516,21 +513,19 @@ impl Raft {
                     self.turn_follower();
                 }
 
-                match &mut self.role {
-                    RoleState::Leader {
-                        next_index,
-                        match_index,
-                    } => {
-                        if reply.success {
-                            match_index[from] = index - 1;
-                            next_index[from] = index;
-                            self.maybe_commit();
-                        } else {
-                            next_index[from] = next_index[from].saturating_sub(1);
-                        }
+                if let RoleState::Leader {
+                    next_index,
+                    match_index,
+                } = &mut self.role
+                {
+                    if reply.success {
+                        match_index[from] = index - 1;
+                        next_index[from] = index;
+                        self.maybe_commit();
+                    } else {
+                        next_index[from] = next_index[from].saturating_sub(1);
                     }
-                    _ => {}
-                }
+                };
             }
             Err(err) => {
                 println!("[handle_append_entries_reply] err is: {}", err);

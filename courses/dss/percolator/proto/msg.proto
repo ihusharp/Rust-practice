@@ -34,7 +34,7 @@ message Write {
 message PrewriteRequest {
     bytes primary_key = 1;
     uint64 start_ts = 2;
-    Write mutations = 3;
+    Write mutation = 3;
 }
 
 message PrewriteResponse {
