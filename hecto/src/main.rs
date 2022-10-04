@@ -2,9 +2,10 @@
 mod editor;
 mod terminal;
 mod document;
+mod row;
 
 use editor::Editor;
 fn main() {
-    let mut editor = Editor::new();
+    let mut editor = Editor::default();
     editor.run();
 }
