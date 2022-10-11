@@ -59,13 +59,13 @@ impl Editor {
     pub fn default() -> Self {
         let args: Vec<String> = env::args().collect();
         let mut initial_status = String::from("HELP: Ctrl-S = save | Ctrl-C = quit");
-        let document = if args.len() > 1 {
-            match Document::open(&args[1]) {
-                Ok(doc) => doc,
-                Err(err) => {
-                    initial_status = format!("Error opening file: {}", err);
-                    Document::default()
-                }
+        let document = if let Some(file_name) = args.get(1) {
+            let doc = Document::open(file_name);
+            if let Ok(doc) = doc {
+                doc
+            } else {
+                initial_status = format!("Err: could not open file: {}", file_name);
+                Document::default()
             }
         } else {
             Document::default()
@@ -138,7 +138,7 @@ impl Editor {
             Key::Ctrl('c') => {
                 if self.quit_times > 0 && self.document.is_dirty() {
                     self.status_message = StatusMessage::from(format!(
-                        "WARNING! File has unsaved changes. Press Ctrl-Q {} more time to quit.",
+                        "WARNING! File has unsaved changes. Press Ctrl-C {} more time to quit.",
                         self.quit_times
                     ));
                     self.quit_times -= 1;
