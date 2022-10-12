@@ -106,6 +106,19 @@ impl Row {
         }
     }
 
+    pub fn find(&self, query: &str, after: usize) -> Option<usize> {
+        let substring = self.string[..].graphemes(true).skip(after).collect::<String>();
+        let match_index = substring.find(query);
+        if let Some(match_index) = match_index {
+            for (index, (byte_index, _)) in substring[..].grapheme_indices(true).enumerate() {
+                if match_index == byte_index {
+                    return Some(after + index);
+                }
+            }
+        }
+        None
+    }
+
     fn update_len(&mut self) {
         self.len = self.len();
     }
