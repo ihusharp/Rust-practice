@@ -15,6 +15,12 @@ pub struct Position {
     pub y: usize,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum SearchDirection {
+    Forward,
+    Backward,
+}
+
 struct StatusMessage {
     text: String,
     time: std::time::Instant,
@@ -100,31 +106,24 @@ impl Editor {
 
     fn search(&mut self) {
         let old_position = self.cursor_position.clone();
-        if let Some(query) = self.prompt("Search(ESC to cancel, Arrows to navigate): ", |editor, key, query| {
-            let mut moved = false;
+        let mut direction = SearchDirection::Forward;
+        let query = self.prompt("Search(ESC to cancel, Arrows to navigate): ", |editor, key, query| {
             match key {
                 Key::Right | Key::Down => {
+                    direction = SearchDirection::Forward;
                     editor.move_cursor(Key::Right);
-                    moved = true;
                 }
-                _ => (),
+                Key::Left | Key::Up => direction = SearchDirection::Backward,
+                _ => direction = SearchDirection::Forward,
             }
-            if let Some(position) = editor.document.find(query, &editor.cursor_position) {
+            if let Some(position) = editor.document.find(query, &editor.cursor_position, direction) {
                 editor.cursor_position = position;
                 editor.scroll();
-            } else if moved {
+            } else if direction == SearchDirection::Forward {
                 editor.move_cursor(Key::Left);
             }
-        }).unwrap_or(None) {
-            if let Some(position) = self.document.find(&query, &old_position) {
-                self.cursor_position = position;
-            } else {
-                self.status_message = StatusMessage::from(format!(
-                    "Search: '{}' not found",
-                    query
-                ));
-            }
-        } else {
+        }).unwrap_or(None);
+        if query.is_none() {
             self.cursor_position = old_position;
             self.scroll();
         }
@@ -359,9 +358,9 @@ impl Editor {
         }
     }
 
-    fn prompt<C>(&mut self, str: &str, callback: C) -> Result<Option<String>, io::Error> 
+    fn prompt<C>(&mut self, str: &str, mut callback: C) -> Result<Option<String>, io::Error> 
     where 
-        C: Fn(&mut Self, Key, &String),
+        C: FnMut(&mut Self, Key, &String),
     {
         let mut input = String::new();
         loop {
