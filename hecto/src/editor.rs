@@ -122,11 +122,13 @@ impl Editor {
             } else if direction == SearchDirection::Forward {
                 editor.move_cursor(Key::Left);
             }
+            editor.document.highlight(Some(query));
         }).unwrap_or(None);
         if query.is_none() {
             self.cursor_position = old_position;
             self.scroll();
         }
+        self.document.highlight(None);
     }
 
     fn draw_welcome_msg(&self) {
@@ -323,11 +325,15 @@ impl Editor {
         let mut file_name = "untitled".to_string();
         if let Some(name) = &self.document.file_name {
             file_name = name.to_string();
-            file_name.truncate(20);
+            if file_name.contains(".") {
+                let vec: Vec<&str> = file_name.split(".").collect();
+                file_name = vec[0].to_string();
+            }
         }
         status = format!(
-            "{} - {} lines{}",
+            "{} {} - {} lines{}",
             file_name,
+            self.document.file_type(),
             self.document.len(),
             modified_indicator
         );

@@ -12,6 +12,8 @@ mod document;
 mod editor;
 mod row;
 mod terminal;
+mod highlight;
+mod filetype;
 
 use editor::Editor;
 fn main() {
