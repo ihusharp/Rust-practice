@@ -64,7 +64,8 @@ impl Editor {
 
     pub fn default() -> Self {
         let args: Vec<String> = env::args().collect();
-        let mut initial_status = String::from("HELP: Ctrl-S = save | Ctrl-C = quit | Ctrl-F = find");
+        let mut initial_status =
+            String::from("HELP: Ctrl-S = save | Ctrl-C = quit | Ctrl-F = find");
         let document = if let Some(file_name) = args.get(1) {
             let doc = Document::open(file_name);
             if let Ok(doc) = doc {
@@ -90,7 +91,7 @@ impl Editor {
 
     fn save(&mut self) {
         if self.document.file_name.is_none() {
-            let new_name = self.prompt("Save as: ", |_, _, _|{} ).unwrap_or(None);
+            let new_name = self.prompt("Save as: ", |_, _, _| {}).unwrap_or(None);
             if new_name.is_none() {
                 self.status_message = StatusMessage::from("Save aborted".to_string());
                 return;
@@ -107,23 +108,32 @@ impl Editor {
     fn search(&mut self) {
         let old_position = self.cursor_position.clone();
         let mut direction = SearchDirection::Forward;
-        let query = self.prompt("Search(ESC to cancel, Arrows to navigate): ", |editor, key, query| {
-            match key {
-                Key::Right | Key::Down => {
-                    direction = SearchDirection::Forward;
-                    editor.move_cursor(Key::Right);
-                }
-                Key::Left | Key::Up => direction = SearchDirection::Backward,
-                _ => direction = SearchDirection::Forward,
-            }
-            if let Some(position) = editor.document.find(query, &editor.cursor_position, direction) {
-                editor.cursor_position = position;
-                editor.scroll();
-            } else if direction == SearchDirection::Forward {
-                editor.move_cursor(Key::Left);
-            }
-            editor.document.highlight(Some(query));
-        }).unwrap_or(None);
+        let query = self
+            .prompt(
+                "Search(ESC to cancel, Arrows to navigate): ",
+                |editor, key, query| {
+                    match key {
+                        Key::Right | Key::Down => {
+                            direction = SearchDirection::Forward;
+                            editor.move_cursor(Key::Right);
+                        }
+                        Key::Left | Key::Up => direction = SearchDirection::Backward,
+                        _ => direction = SearchDirection::Forward,
+                    }
+                    if let Some(position) =
+                        editor
+                            .document
+                            .find(query, &editor.cursor_position, direction)
+                    {
+                        editor.cursor_position = position;
+                        editor.scroll();
+                    } else if direction == SearchDirection::Forward {
+                        editor.move_cursor(Key::Left);
+                    }
+                    editor.document.highlight(Some(query));
+                },
+            )
+            .unwrap_or(None);
         if query.is_none() {
             self.cursor_position = old_position;
             self.scroll();
@@ -155,7 +165,10 @@ impl Editor {
         let height = self.terminal.size().height;
         for terminal_row in 0..height {
             Terminal::clear_current_line();
-            if let Some(row) = self.document.row(self.offset.y.saturating_add(terminal_row as usize)) {
+            if let Some(row) = self
+                .document
+                .row(self.offset.y.saturating_add(terminal_row as usize))
+            {
                 self.draw_row(row);
             } else if self.document.is_empty() && terminal_row == height / 3 {
                 self.draw_welcome_msg();
@@ -326,8 +339,7 @@ impl Editor {
         if let Some(name) = &self.document.file_name {
             file_name = name.to_string();
             if file_name.contains(".") {
-                let vec: Vec<&str> = file_name.split(".").collect();
-                file_name = vec[0].to_string();
+                file_name = file_name.split(".").nth(0).unwrap().to_string();
             }
         }
         status = format!(
@@ -364,8 +376,8 @@ impl Editor {
         }
     }
 
-    fn prompt<C>(&mut self, str: &str, mut callback: C) -> Result<Option<String>, io::Error> 
-    where 
+    fn prompt<C>(&mut self, str: &str, mut callback: C) -> Result<Option<String>, io::Error>
+    where
         C: FnMut(&mut Self, Key, &String),
     {
         let mut input = String::new();

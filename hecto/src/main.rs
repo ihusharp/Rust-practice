@@ -6,14 +6,14 @@
     clippy::print_stdout,
     clippy::wildcard_enum_match_arm,
     clippy::else_if_without_else,
-    clippy::integer_arithmetic,
+    clippy::integer_arithmetic
 )]
 mod document;
 mod editor;
+mod filetype;
+mod highlight;
 mod row;
 mod terminal;
-mod highlight;
-mod filetype;
 
 use editor::Editor;
 fn main() {

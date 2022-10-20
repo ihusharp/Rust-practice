@@ -1,5 +1,16 @@
 \tMiss u
-Right Now;
+match Right Now;
+/*
+aaenum
+*/ 
+
+loop
+mod
+mod
+happy
+char 8
+"self"
+static
 "aa\\aaa"
 'a'
 'b'
