@@ -171,7 +171,7 @@ impl Row {
         self.string.as_bytes()
     }
 
-    fn highlight_match(&mut self, word: Option<&str>) {
+    fn highlight_match(&mut self, word: &Option<String>) {
         if let Some(word) = word {
             if word.is_empty() {
                 return;
@@ -251,11 +251,12 @@ impl Row {
             if let Some(next_ch) = chars.get(index.saturating_add(1)) {
                 if *next_ch == '*' {
                     let closing_index = if let Some(closing_index) =
-                        self.string[index.saturating_add(2)..].find("*/") {
-                            *index + closing_index + 4
-                        } else {
-                            chars.len()
-                        };
+                        self.string[index.saturating_add(2)..].find("*/")
+                    {
+                        *index + closing_index + 4
+                    } else {
+                        chars.len()
+                    };
                     for _ in *index..closing_index {
                         self.highlight.push(highlight::Type::MultiComment);
                         *index += 1;
@@ -407,10 +408,11 @@ impl Row {
     pub fn highlight(
         &mut self,
         opts: &HighlightOptions,
-        word: Option<&str>,
+        word: &Option<String>,
         start_with_comment: bool,
     ) -> bool {
         let chars = self.string.chars().collect::<Vec<char>>();
+        self.highlight = Vec::new();
         let mut index = 0;
         let mut in_ml_comment = start_with_comment;
         if in_ml_comment {
@@ -468,7 +470,7 @@ mod test_super {
             highlight::Type::None,
             highlight::Type::None,
         ];
-        row.highlight_match(Some("t"));
+        row.highlight_match(&Some("t".to_string()));
         assert_eq!(
             vec![
                 highlight::Type::Number,
