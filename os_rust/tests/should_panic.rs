@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-
 use os_rust::serial_print;
 
 #[no_mangle]
