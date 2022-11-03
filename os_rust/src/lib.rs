@@ -13,6 +13,8 @@ pub mod gdt;
 pub fn init() {
     gdt::init();
     interrupts::init_idt();
+    unsafe { interrupts::PICS.lock().initialize() };
+    x86_64::instructions::interrupts::enable();
 }
 
 #[cfg(test)]
@@ -33,6 +35,7 @@ pub fn test_runner(tests: &[&dyn Fn()]) {
 }
 
 use core::panic::PanicInfo;
+
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
