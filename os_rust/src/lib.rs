@@ -2,14 +2,19 @@
 #![cfg_attr(test, no_main)]
 #![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
+#![feature(alloc_error_handler)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+
+extern crate alloc;
+use linked_list_allocator::LockedHeap;
 
 pub mod serial;
 pub mod vga_buffer;
 pub mod interrupts;
 pub mod gdt;
 pub mod memory; // for page
+pub mod allocator;  // for dynamic memory
 
 pub fn init() {
     gdt::init();
@@ -17,6 +22,10 @@ pub fn init() {
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
 }
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
+
 #[cfg(test)]
 use bootloader::{entry_point, BootInfo};
 
