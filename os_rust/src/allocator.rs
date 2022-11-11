@@ -7,6 +7,7 @@ use x86_64::{
     VirtAddr,
 };
 
+pub mod bump;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
@@ -38,6 +39,17 @@ pub fn init_heap(
 
     Ok(())
 }
+
+/// Align the given address `addr` upwards to align it to `align`.
+fn align_up(addr: usize, align: usize) -> usize {
+    let remainder = addr % align;
+    if remainder == 0 {
+        addr    // already aligned
+    } else {
+        addr + align - remainder
+    }
+}
+
 pub struct Dummy;
 
 unsafe impl GlobalAlloc for Dummy {
