@@ -7,10 +7,17 @@ use x86_64::{
     VirtAddr,
 };
 
+use self::fixed_size_block::FixedSizeBlockAllocator;
+
 pub mod bump;
+pub mod linked_list;
+pub mod fixed_size_block;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
+
+#[global_allocator]
+static ALLOCATOR: Locked<FixedSizeBlockAllocator> = Locked::new(FixedSizeBlockAllocator::new());
 
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
@@ -34,7 +41,7 @@ pub fn init_heap(
     }
 
     unsafe {
-        super::ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }
 
     Ok(())
@@ -42,11 +49,23 @@ pub fn init_heap(
 
 /// Align the given address `addr` upwards to align it to `align`.
 fn align_up(addr: usize, align: usize) -> usize {
-    let remainder = addr % align;
-    if remainder == 0 {
-        addr    // already aligned
-    } else {
-        addr + align - remainder
+    (addr + align - 1) % !(align - 1)
+}
+
+/// A wrapper around spin::Mutex to permit trait implementations
+pub struct Locked<A> {
+    inner: spin::Mutex<A>,
+}
+
+impl<A> Locked<A> {
+    pub const fn new(inner: A) -> Self {
+        Locked {
+            inner: spin::Mutex::new(inner)
+        }
+    }
+
+    pub fn lock(&self) -> spin::MutexGuard<A> {
+        self.inner.lock()
     }
 }
 

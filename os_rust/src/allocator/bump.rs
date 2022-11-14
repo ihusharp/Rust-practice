@@ -1,6 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
-use super::align_up;
+use super::{align_up, Locked};
 
 pub struct BumpAllocator {
     heap_start: usize,
@@ -50,29 +50,12 @@ unsafe impl GlobalAlloc for Locked<BumpAllocator> {
         }
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
         let mut bump = self.lock();
         bump.allocations -= 1;
         if bump.allocations == 0 {
             // reset the bump allocator
             bump.next = bump.heap_start;
         }
-    }
-}
-
-/// A wrapper around spin::Mutex to permit trait implementations
-pub struct Locked<A> {
-    inner: spin::Mutex<A>,
-}
-
-impl<A> Locked<A> {
-    pub const fn new(inner: A) -> Self {
-        Locked {
-            inner: spin::Mutex::new(inner)
-        }
-    }
-
-    pub fn lock(&self) -> spin::MutexGuard<A> {
-        self.inner.lock()
     }
 }
