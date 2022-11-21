@@ -15,6 +15,7 @@ pub mod interrupts;
 pub mod gdt;
 pub mod memory; // for page
 pub mod allocator;  // for dynamic memory
+pub mod task;   // for multitasking
 
 pub fn init() {
     gdt::init();

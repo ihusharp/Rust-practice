@@ -8,7 +8,7 @@ extern crate alloc;
 
 use core::panic::PanicInfo;
 use alloc::{boxed::Box, rc::Rc, vec, vec::Vec};
-use os_rust::println;
+use os_rust::{println, task::{Task, keyboard, executor::Executor}};
 use bootloader::{BootInfo, entry_point};
 
 entry_point!(kernel_main);
@@ -58,11 +58,26 @@ fn kernel_main(bootinfo: &'static BootInfo) -> ! {
     core::mem::drop(reference_counted);
     println!("after reference cnt is {}", Rc::strong_count(&reference_counted_clone));
 
+    // implement a simple executor for async tasks
+    let mut executor = Executor::new();
+    executor.spawn(Task::new(example_task()));
+    executor.spawn(Task::new(keyboard::print_keypresses()));
+    executor.run();
+
     #[cfg(test)]
     test_main();
 
     println!("It did not crash!");
     os_rust::hlt_loop();
+}
+
+async fn async_num() -> u32 {
+    54
+}
+
+async fn example_task() {
+    let num = async_num().await;
+    println!("async num: {}", num);
 }
 
 /// This function is called on panic.
