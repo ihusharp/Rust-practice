@@ -1,9 +1,9 @@
 use lists::first::List;
 
 fn main() {
-    let list = List::Elem(1, 
-        Box::new(List::Elem(2, 
-            Box::new(List::Elem(3, 
-                Box::new(List::Empty))))));
+    let mut list = List::new();
+    list.push(1);
+    list.push(2);
     println!("list = {:?}", list);
+    println!("pop = {:?}", list.pop());
 }
