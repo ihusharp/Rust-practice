@@ -36,16 +36,12 @@ impl<T> List<T> {
 
     // peek
     pub fn peek(&self) -> Option<&T> {
-        self.head.as_ref().map(|node| {
-            &node.elem
-        })
+        self.head.as_ref().map(|node| &node.elem)
     }
 
     // peek_mut
     pub fn peek_mut(&mut self) -> Option<&mut T> {
-        self.head.as_mut().map(|node| {
-            &mut node.elem
-        })
+        self.head.as_mut().map(|node| &mut node.elem)
     }
 }
 
@@ -80,7 +76,9 @@ pub struct Iter<'a, T> {
 
 impl<T> List<T> {
     pub fn iter(&self) -> Iter<T> {
-        Iter { next: self.head.as_deref() }
+        Iter {
+            next: self.head.as_deref(),
+        }
     }
 }
 
@@ -96,14 +94,15 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
-
 pub struct IterMut<'a, T> {
     next: Option<&'a mut Node<T>>,
 }
 
 impl<T> List<T> {
     pub fn iter_mut(&mut self) -> IterMut<T> {
-        IterMut { next: self.head.as_deref_mut() }
+        IterMut {
+            next: self.head.as_deref_mut(),
+        }
     }
 }
 
@@ -118,8 +117,6 @@ impl<'a, T> Iterator for IterMut<'a, T> {
         })
     }
 }
-
-
 
 #[cfg(test)]
 mod test {

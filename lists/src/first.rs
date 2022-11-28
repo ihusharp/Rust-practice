@@ -14,9 +14,8 @@ struct Node {
 #[derive(Debug)]
 enum Link {
     Empty,
-    More(Box<Node>)
+    More(Box<Node>),
 }
-
 
 impl List {
     // Create an empty list
@@ -40,7 +39,7 @@ impl List {
             Link::More(node) => {
                 self.head = node.next;
                 Some(node.elem)
-            },
+            }
         }
     }
 }
@@ -53,8 +52,6 @@ impl Drop for List {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod test {
