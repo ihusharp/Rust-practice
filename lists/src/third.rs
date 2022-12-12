@@ -105,7 +105,7 @@ mod test {
         list = list.prepend(1).prepend(2).prepend(3);
         let mut iter = list.iter();
         assert_eq!(iter.next(), Some(&3));
-        list.tail();    // just structure a point to list 2
+        list.tail(); // just structure a point to list 2
         assert_eq!(list.head(), Some(&3));
         assert_eq!(iter.next(), Some(&2));
         assert_eq!(iter.next(), Some(&1));
