@@ -34,6 +34,11 @@ This series is core to TALENT-PLAN. It builds your understanding of Rust as a pr
 
 This is a short lecture on how to use the Rust type system to build necessary components in a database system.
 
+### [Rust Atomics and Locks (Low-Level Concurrency in Practice)](https://marabos.nl/atomics/)
+
+helps Rust programmers of all levels gain a clear understanding of low-level concurrency. You’ll learn everything about atomics and memory 
+ordering and how they're combined with basic operating system APIs to build common primitives like mutexes and condition variables. Once you’re done, you’ll have a firm grasp of how Rust’s memory model, the processor, and the role of the operating system all fit together.
+
 ### [LSM in a Week](https://github.com/skyzh/mini-lsm)
 
 Build a simple key-value storage engine in a week!
