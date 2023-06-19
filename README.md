@@ -26,8 +26,6 @@ This series is core to TALENT-PLAN. It builds your understanding of Rust as a pr
 
 - [TP 202: Distributed Systems in Rust](courses/dss/README.md). Adapted from the [MIT 6.824](http://nil.csail.mit.edu/6.824/2017/index.html) distributed systems coursework, this course focuses on implementing important distributed algorithms, including the [Raft](https://raft.github.io/) consensus algorithm, and the [Percolator](https://storage.googleapis.com/pub-tools-public-publication-data/pdf/36726.pdf) distributed transaction protocol.
 
-  
-
 ## WIP
 
 ### [Type Exercise in Rust](https://github.com/skyzh/type-exercise-in-rust)
@@ -36,8 +34,11 @@ This is a short lecture on how to use the Rust type system to build necessary co
 
 ### [Rust Atomics and Locks (Low-Level Concurrency in Practice)](https://marabos.nl/atomics/)
 
-helps Rust programmers of all levels gain a clear understanding of low-level concurrency. You’ll learn everything about atomics and memory 
-ordering and how they're combined with basic operating system APIs to build common primitives like mutexes and condition variables. Once you’re done, you’ll have a firm grasp of how Rust’s memory model, the processor, and the role of the operating system all fit together.
+helps Rust programmers of all levels gain a clear understanding of low-level concurrency. You’ll learn everything about atomics and memory ordering and how they're combined with basic operating system APIs to build common primitives like mutexes and condition variables. Once you’re done, you’ll have a firm grasp of how Rust’s memory model, the processor, and the role of the operating system all fit together.
+
+### [Asynchronous Programming in Rust](https://rust-lang.github.io/async-book/)
+
+Welcome to Asynchronous Programming in Rust! If you're looking to start writing asynchronous Rust code, you've come to the right place. Whether you're building a web server, a database, or an operating system, this book will show you how to use Rust's asynchronous programming tools to get the most out of your hardware.
 
 ### [LSM in a Week](https://github.com/skyzh/mini-lsm)
 
