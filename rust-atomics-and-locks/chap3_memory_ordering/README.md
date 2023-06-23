@@ -50,3 +50,17 @@ Atomic addition and subtraction silently wrap around on overflow.
 Compare-and-exchange operations are the most flexible and general, and a building block for making any other atomic operation.
 
 A weak compare-and-exchange operation can be slightly more efficient.
+
+### Chapter 3:memory-ordering
+
+- There might not be a global consistent order of all atomic operations, as things can appear to happen in a different order from different threads.
+- However, each individual atomic variable has its own *total modification order*, regardless of memory ordering, which all threads agree on.
+- The order of operations is formally defined through *happens-before* relationships.
+- Within a single thread, there is a happens-before relationship between every single operation.
+- Spawning a thread happens-before everything the spawned thread does.
+- Everything a thread does happens-before joining that thread.
+- Unlocking a mutex happens-before locking that mutex again.
+- Acquire-loading the value from a release-store establishes a happens-before relationship. This value may be modified by any number of fetch-and-modify and compare-and-exchange operations.
+- A consume-load would be a lightweight version of an acquire-load, if it existed.
+- Sequentially consistent ordering results in a globally consistent order of operations, but is almost never necessary and can make code review more complicated.
+- Fences allow you to combine the memory ordering of multiple operations or apply a memory ordering conditionally.
