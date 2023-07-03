@@ -1,87 +1,26 @@
-use std::thread;
+use async_future::server;
 
-use async_future::TimerFuture;
+/// 因为async/await就是通过Generator实现的，Generator是通过匿名结构体实现的。
+/// 如果async函数中存在跨await的引用，会导致底层Generator存在跨yield的引用，
+/// 那根据Generator生成的匿名结构体就会是一个自引用结构体！
+/// 然后这个自引用结构体会impl Future，
+/// 异步的Runtime在调用Future::poll()函数查询状态的时候，需要一个可变借用（即&mut Self）。
+/// 如果这个&mut Self不包裹在Pin里面的话，
+/// 开发者自己impl Future就会利用std::mem::swap()之类的函数move掉&mut Self！
+/// 所以这就是Future的poll()必须要使用Pin<&mut Self>的原因。
 
-use {
-    futures::{
-        future::{BoxFuture, FutureExt},
-        task::{waker_ref, ArcWake},
-    },
-    std::{
-        future::Future,
-        sync::mpsc::{sync_channel, Receiver, SyncSender},
-        sync::{Arc, Mutex},
-        task::Context,
-        time::Duration,
-    },
-};
 
-struct Spawner {
-    task_sender: SyncSender<Arc<Task>>,
-}
+#[async_std::main]
+async fn main() {
+    // println!("Test async_future::executor::exec_test()");
+    // executor::exec_test();
 
-impl Spawner {
-    fn spawn(&self, future: impl Future<Output = ()> + 'static + Send) {
-        let task = Arc::new(Task {
-            future: Mutex::new(Some(future.boxed())),
-            task_sender: self.task_sender.clone(),
-        });
-        self.task_sender.send(task).expect("queue is full");
-    }
-}
+    // println!("Test async_future::pin_test::pin_test()");
+    // pin_test::pin_test();
 
-struct Executer {
-    ready_queue: Receiver<Arc<Task>>,
-}
+    // println!("Test async_future::pin_test::unpin_future()");
+    // pin_test::unpin_future();
 
-impl Executer {
-    fn run(&self) {
-        while let Ok(task) = self.ready_queue.recv() {
-            println!("run: {:?}", thread::current().id());
-            let mut future = task.future.lock().unwrap();
-            // Check future is some
-            if let Some(mut f) = future.take() {
-                let waker = waker_ref(&task);
-                let context = &mut Context::from_waker(&*waker);
-                println!("run: poll: {:?}", thread::current().id());
-                if f.as_mut().poll(context).is_pending() {
-                    println!("run: pending: {:?}", thread::current().id());
-                    // Pending for next poll
-                    *future = Some(f);
-                }
-            }
-        }
-    }
-}
-
-struct Task {
-    future: Mutex<Option<BoxFuture<'static, ()>>>,
-    task_sender: SyncSender<Arc<Task>>,
-}
-
-impl ArcWake for Task {
-    fn wake_by_ref(arc_self: &Arc<Self>) {
-        println!("wake_by_ref: {:?}", thread::current().id());
-        arc_self
-            .task_sender
-            .send(arc_self.clone())
-            .expect("queue is full");
-    }
-}
-
-fn new_executer_and_spawner() -> (Executer, Spawner) {
-    let (task_sender, ready_queue) = sync_channel(100);
-    (Executer { ready_queue }, Spawner { task_sender })
-}
-
-fn main() {
-    let (executer, spawner) = new_executer_and_spawner();
-    spawner.spawn(async {
-        println!("start!");
-        TimerFuture::new(Duration::from_secs(2)).await;
-        println!("end!");
-    });
-
-    drop(spawner);
-    executer.run();
+    // server::server().await;
+    server::test_handle_connection().await;
 }
