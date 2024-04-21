@@ -1,13 +1,16 @@
-mod acquire_and_release;
+mod fence;
+mod loom_check;
+mod release_and_acquire;
 mod releaxed;
 mod seq;
-mod  fence;
 
 fn main() {
     // releaxed::releaxed();
-    // acquire_and_release::acquire_and_release();
-    // acquire_and_release::locking();
-    // acquire_and_release::get_data();
+    // releaxed::check_a_b();
+    // release_and_acquire::release_and_acquire1();
+    // release_and_acquire::release_and_acquire2();
+    release_and_acquire::locking();
+    // release_and_acquire::get_data();
     // seq::seq();
-    fence::fence_check();
+    // fence::fence_check();
 }

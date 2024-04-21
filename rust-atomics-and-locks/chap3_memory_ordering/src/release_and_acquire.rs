@@ -1,17 +1,32 @@
 use std::{
     sync::atomic::{
-        AtomicBool, AtomicPtr,
+        AtomicBool, AtomicPtr, AtomicU64,
         Ordering::{Acquire, Relaxed, Release},
     },
     thread,
     time::Duration,
 };
 
-static mut DATA_U64: u64 = 0;
+static DATA: AtomicU64 = AtomicU64::new(0);
 static READY: AtomicBool = AtomicBool::new(false);
 
 #[allow(dead_code)]
-pub fn acquire_and_release() {
+pub fn release_and_acquire1() {
+    thread::spawn(|| {
+        DATA.store(123, Relaxed);
+        READY.store(true, Release); // Everything from before this store ..
+    });
+    while !READY.load(Acquire) {
+        // .. is visible after this loads `true`.
+        thread::sleep(Duration::from_millis(100));
+        println!("waiting...");
+    }
+    println!("{}", DATA.load(Relaxed));
+}
+
+static mut DATA_U64: u64 = 0;
+#[allow(dead_code)]
+pub fn release_and_acquire2() {
     thread::spawn(|| {
         unsafe {
             DATA_U64 = 123;
@@ -40,15 +55,9 @@ static LOCK: AtomicBool = AtomicBool::new(false);
 
 fn f_lock() {
     if LOCK.compare_exchange(false, true, Acquire, Relaxed).is_ok() {
+        // Safety: We hold the exclusive lock, so nothing else is accessing DATA.
         unsafe {
             DATA_STRING.push_str("hello");
-        }
-        LOCK.store(false, Release);
-    }
-
-    if LOCK.swap(true, Acquire) == false {
-        unsafe {
-            DATA_STRING.push_str("world");
         }
         LOCK.store(false, Release);
     }

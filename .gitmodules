@@ -1,3 +1,4 @@
 [submodule "mini-lsm"]
 	path = mini-lsm
 	url = git@github.com:ihusharp/mini-lsm.git
+	branch = master

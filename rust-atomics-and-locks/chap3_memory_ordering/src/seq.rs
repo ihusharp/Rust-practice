@@ -16,7 +16,9 @@ fn write_y() {
 }
 
 fn read_x_then_y() {
-    while !X.load(SeqCst) {}
+    while !X.load(SeqCst) {
+        std::hint::spin_loop()
+    }
     if Y.load(SeqCst) {
         // 3
         Z.fetch_add(1, SeqCst);
@@ -24,7 +26,9 @@ fn read_x_then_y() {
 }
 
 fn read_y_then_x() {
-    while !Y.load(SeqCst) {}
+    while !Y.load(SeqCst) {
+        std::hint::spin_loop()
+    }
     if X.load(SeqCst) {
         // 4
         Z.fetch_add(1, SeqCst);

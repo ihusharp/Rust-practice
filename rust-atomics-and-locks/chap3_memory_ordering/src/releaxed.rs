@@ -1,20 +1,23 @@
 use std::{
-    sync::atomic::{AtomicI32, Ordering::Relaxed},
+    sync::atomic::{
+        AtomicI32,
+        Ordering::Relaxed,
+    },
     thread,
 };
 
 #[allow(dead_code)]
 pub fn releaxed() {
     thread::scope(|s| {
-        s.spawn(|| a());
+        s.spawn(a);
 
-        s.spawn(|| b());
+        s.spawn(b);
     });
 
     thread::scope(|s| {
-        s.spawn(|| relaxed_a());
+        s.spawn(relaxed_a);
 
-        s.spawn(|| relaxed_b());
+        s.spawn(relaxed_b);
     });
 }
 
@@ -30,6 +33,15 @@ fn b() {
     let y = Y.load(Relaxed);
     let x = X.load(Relaxed);
     println!("{x}, {y}");
+}
+
+#[allow(dead_code)]
+pub fn check_a_b() {
+    let t1 = thread::spawn(a);
+    let t2 = thread::spawn(b);
+
+    t1.join().unwrap();
+    t2.join().unwrap();
 }
 
 static RELAXED: AtomicI32 = AtomicI32::new(0);

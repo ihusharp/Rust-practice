@@ -12,5 +12,4 @@ fn main() {
     // progress_report_multiple_threads::statistics();
     // id_allocation::id_allocation();
     id_allocation::get_key();
-    id_allocation::get_key();
 }

@@ -1,6 +1,7 @@
 use std::{
     sync::atomic::{AtomicUsize, Ordering::Relaxed},
     thread,
+    time::Duration,
 };
 
 #[allow(dead_code)]
@@ -12,7 +13,7 @@ pub fn progress_report() {
         s.spawn(|| {
             for i in 0..100 {
                 println!("Processing item {}", i);
-                thread::sleep(std::time::Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(100));
                 num_done.store(i + 1, Relaxed);
             }
         });
@@ -24,7 +25,7 @@ pub fn progress_report() {
                 break;
             }
             println!("Working.. {n}/100 done");
-            thread::sleep(std::time::Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(1));
         }
 
         println!("Done!");

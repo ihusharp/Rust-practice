@@ -1,10 +1,16 @@
-use std::{sync::atomic::{fence, AtomicBool, Ordering::{Release, Relaxed, Acquire}}, thread, time::Duration};
+use std::{
+    sync::atomic::{
+        fence, AtomicBool,
+        Ordering::{Acquire, Relaxed, Release},
+    },
+    thread,
+    time::Duration,
+};
 
 static mut DATA: [u64; 10] = [0; 10];
 
 const ATOMIC_FALSE: AtomicBool = AtomicBool::new(false);
 static READY: [AtomicBool; 10] = [ATOMIC_FALSE; 10];
-
 
 #[allow(dead_code)]
 pub fn fence_check() {

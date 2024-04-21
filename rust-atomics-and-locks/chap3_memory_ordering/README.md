@@ -1,7 +1,6 @@
-Summary
-=======
+# Summary
 
-### Chapter 1: Multiple Threads
+## Chapter 1: Multiple Threads
 
 Multiple threads can run concurrently within the same program and can be spawned at any time.
 
@@ -29,7 +28,7 @@ Thread parking can be a convenient way to wait for some condition.
 
 When a condition is about data protected by a Mutex, using a Condvar is more convenient, and can be more efficient, than thread parking.
 
-### Chapter 2: Atomic Operations
+## Chapter 2: Atomic Operations
 
 Atomic operations are indivisible; they have either fully completed, or they haven’t happened yet.
 
@@ -51,7 +50,7 @@ Compare-and-exchange operations are the most flexible and general, and a buildin
 
 A weak compare-and-exchange operation can be slightly more efficient.
 
-### Chapter 3:memory-ordering
+## Chapter 3: Memory Ordering
 
 - There might not be a global consistent order of all atomic operations, as things can appear to happen in a different order from different threads.
 - However, each individual atomic variable has its own *total modification order*, regardless of memory ordering, which all threads agree on.

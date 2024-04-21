@@ -1,3 +1,4 @@
+pub mod lifetime;
 pub mod perform;
 pub mod spinlock;
 
